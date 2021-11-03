@@ -87,6 +87,27 @@ interface/device properties:
 	CAKE options for ingress + egress
 
 
+Mapping file syntax:
+
+Each line has two whitespace separated fields, match and dscp
+match is one of:
+- tcp:<port>[-<endport>]
+	TCP single port, or range from <port> to <endport>
+- udp:<port>[-<endport>]
+	UDP single port, or range from <port> to <endport>
+- <ipaddr>
+	IPv4 address, e.g. 1.1.1.1
+- <ipv6addr>
+	IPv6 address, e.g. ff01::1
+- dns:<regex>
+	POSIX.2 extended regular expression for matching hostnames
+	Only works, if dns lookups are passed to qosify via the add_dns_host ubus call.
+
+dscp can be a raw value, or a codepoint like CS0
+Adding a + in front of the value tells qosify to only override the DSCP value if it is non-zero
+
+
+
 Planned features:
 - Integration with dnsmasq to support hostname pattern based DSCP marking
 - Support for LAN host based priority
