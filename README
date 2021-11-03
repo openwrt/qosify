@@ -104,8 +104,7 @@ match is one of:
 	Only works, if dns lookups are passed to qosify via the add_dns_host ubus call.
 
 dscp can be a raw value, or a codepoint like CS0
-Adding a + in front of the value tells qosify to only override the DSCP value if it is non-zero
-
+Adding a + in front of the value tells qosify to only override the DSCP value if it is zero
 
 
 Planned features:
