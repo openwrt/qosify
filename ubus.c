@@ -258,12 +258,6 @@ qosify_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
 	return 0;
 }
 
-enum {
-	CL_DEV_EVENT_NAME,
-	CL_DEV_EVENT_ADD,
-	__CL_DEV_EVENT_MAX,
-};
-
 static int
 qosify_ubus_check_devices(struct ubus_context *ctx, struct ubus_object *obj,
 			  struct ubus_request_data *req, const char *method,
