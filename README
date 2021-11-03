@@ -9,7 +9,7 @@ It supports the following features:
 - dynamically add IP entries with timeout
 - dns regex entries and ubus api for providing dns lookup results
 
-It con be configured via ubus call qosify config.
+It can be configured via ubus call qosify config.
 
 This call supports the following parameters:
 - "reset": BOOL
