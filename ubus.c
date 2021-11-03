@@ -50,6 +50,7 @@ enum {
 	CL_ADD_IPV6,
 	CL_ADD_TCP_PORT,
 	CL_ADD_UDP_PORT,
+	CL_ADD_DNS,
 	__CL_ADD_MAX
 };
 
@@ -60,6 +61,7 @@ static const struct blobmsg_policy qosify_add_policy[__CL_ADD_MAX] = {
 	[CL_ADD_IPV6] = { "ipv6", BLOBMSG_TYPE_ARRAY },
 	[CL_ADD_TCP_PORT] = { "tcp_port", BLOBMSG_TYPE_ARRAY },
 	[CL_ADD_UDP_PORT] = { "udp_port", BLOBMSG_TYPE_ARRAY },
+	[CL_ADD_DNS] = { "dns", BLOBMSG_TYPE_ARRAY },
 };
 
 
@@ -115,6 +117,10 @@ qosify_ubus_add(struct ubus_context *ctx, struct ubus_object *obj,
 
 	if ((cur = tb[CL_ADD_UDP_PORT]) != NULL &&
 	    (ret = qosify_ubus_add_array(cur, dscp, CL_MAP_UDP_PORTS) != 0))
+		return ret;
+
+	if ((cur = tb[CL_ADD_DNS]) != NULL &&
+	    (ret = qosify_ubus_add_array(cur, dscp, CL_MAP_DNS) != 0))
 		return ret;
 
 	qosify_map_timeout = prev_timemout;
