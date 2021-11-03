@@ -7,6 +7,7 @@ It supports the following features:
 - priority boosting based on average packet size
 - bulk flow detection based on number of packets per second
 - dynamically add IP entries with timeout
+- dns regex entries and ubus api for providing dns lookup results
 
 It con be configured via ubus call qosify config.
 
@@ -15,7 +16,7 @@ This call supports the following parameters:
 	Reset the config to defaults instead of only updating supplied values
 
 - "files": ARRAY of STRING
-	List of files with port/IP mappings
+	List of files with port/IP/host mappings
 
 - "timeout": INT32
 	Default timeout for dynamically added entries
