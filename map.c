@@ -506,12 +506,20 @@ void qosify_map_reload(void)
 	qosify_map_gc();
 }
 
+static void qosify_map_free_entry(struct qosify_map_entry *e)
+{
+	int fd = qosify_map_fds[e->data.id];
+
+	avl_delete(&map_data, &e->avl);
+	bpf_map_delete_elem(fd, &e->data.addr);
+	free(e);
+}
+
 void qosify_map_gc(void)
 {
 	struct qosify_map_entry *e, *tmp;
 	int32_t timeout = 0;
 	uint32_t cur_time = qosify_gettime();
-	int fd;
 
 	next_timeout = 0;
 	avl_for_each_element_safe(&map_data, e, avl, tmp) {
@@ -531,10 +539,7 @@ void qosify_map_gc(void)
 		if (e->data.file || e->data.user)
 			continue;
 
-		avl_delete(&map_data, &e->avl);
-		fd = qosify_map_fds[e->data.id];
-		bpf_map_delete_elem(fd, &e->data.addr);
-		free(e);
+		qosify_map_free_entry(e);
 	}
 
 	if (!timeout)
