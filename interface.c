@@ -134,8 +134,9 @@ static const char *check_str(struct blob_attr *attr)
 }
 
 static void
-iface_config_set(struct qosify_iface_config *cfg, struct blob_attr *attr)
+iface_config_set(struct qosify_iface *iface, struct blob_attr *attr)
 {
+	struct qosify_iface_config *cfg = &iface->config;
 	struct blob_attr *tb[__IFACE_ATTR_MAX];
 	struct blob_attr *cur;
 
@@ -149,6 +150,7 @@ iface_config_set(struct qosify_iface_config *cfg, struct blob_attr *attr)
 	cfg->egress = true;
 	cfg->host_isolate = true;
 	cfg->autorate_ingress = true;
+	cfg->nat = !iface->device;
 
 	if ((cur = tb[IFACE_ATTR_BW_UP]) != NULL)
 		cfg->bandwidth_up = check_str(cur);
@@ -390,7 +392,7 @@ static void
 interface_set_config(struct qosify_iface *iface, struct blob_attr *config)
 {
 	iface->config_data = blob_memdup(config);
-	iface_config_set(&iface->config, iface->config_data);
+	iface_config_set(iface, iface->config_data);
 	interface_start(iface);
 }
 
