@@ -6,6 +6,7 @@
 #define __QOS_CLASSIFY_H
 
 #include <stdbool.h>
+#include <regex.h>
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -29,6 +30,7 @@ enum qosify_map_id {
 	CL_MAP_IPV4_ADDR,
 	CL_MAP_IPV6_ADDR,
 	CL_MAP_CONFIG,
+	CL_MAP_DNS,
 	__CL_MAP_MAX,
 };
 
@@ -45,6 +47,10 @@ struct qosify_map_data {
 		uint32_t port;
 		struct in_addr ip;
 		struct in6_addr ip6;
+		struct {
+			const char *pattern;
+			regex_t regex;
+		} dns;
 	} addr;
 };
 
