@@ -585,6 +585,52 @@ void qosify_map_gc(void)
 	uloop_timeout_set(&qosify_map_timer, timeout * 1000);
 }
 
+
+int qosify_map_add_dns_host(const char *host, const char *addr, const char *type, int ttl)
+{
+	struct qosify_map_data data = {
+		.id = CL_MAP_DNS,
+		.addr.dns.pattern = "",
+	};
+	struct qosify_map_entry *e;
+	int prev_timeout = qosify_map_timeout;
+
+	e = avl_find_ge_element(&map_data, &data, e, avl);
+	if (!e)
+		return 0;
+
+	memset(&data, 0, sizeof(data));
+	data.user = true;
+	if (!strcmp(type, "A"))
+		data.id = CL_MAP_IPV4_ADDR;
+	else if (!strcmp(type, "AAAA"))
+		data.id = CL_MAP_IPV6_ADDR;
+	else
+		return 0;
+
+	if (qosify_map_fill_ip(&data, addr))
+		return -1;
+
+	avl_for_element_to_last(&map_data, e, e, avl) {
+		regex_t *regex = &e->data.addr.dns.regex;
+
+		if (e->data.id != CL_MAP_DNS)
+			return 0;
+
+		if (regexec(regex, host, 0, NULL, 0) != 0)
+			continue;
+
+		if (ttl)
+			qosify_map_timeout = ttl;
+		data.dscp = e->data.dscp;
+		__qosify_map_set_entry(&data);
+		qosify_map_timeout = prev_timeout;
+	}
+
+	return 0;
+}
+
+
 void qosify_map_dump(struct blob_buf *b)
 {
 	struct qosify_map_entry *e;

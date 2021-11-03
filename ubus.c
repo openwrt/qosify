@@ -268,6 +268,48 @@ qosify_ubus_check_devices(struct ubus_context *ctx, struct ubus_object *obj,
 	return 0;
 }
 
+enum {
+	CL_DNS_HOST_NAME,
+	CL_DNS_HOST_TYPE,
+	CL_DNS_HOST_ADDR,
+	CL_DNS_HOST_TTL,
+	__CL_DNS_HOST_MAX
+};
+
+static const struct blobmsg_policy qosify_dns_policy[__CL_DNS_HOST_MAX] = {
+	[CL_DNS_HOST_NAME] = { "name", BLOBMSG_TYPE_STRING },
+	[CL_DNS_HOST_TYPE] = { "type", BLOBMSG_TYPE_STRING },
+	[CL_DNS_HOST_ADDR] = { "address", BLOBMSG_TYPE_STRING },
+	[CL_DNS_HOST_TTL] = { "ttl", BLOBMSG_TYPE_INT32 },
+};
+
+static int
+qosify_ubus_add_dns_host(struct ubus_context *ctx, struct ubus_object *obj,
+			 struct ubus_request_data *req, const char *method,
+			 struct blob_attr *msg)
+{
+	struct blob_attr *tb[__CL_DNS_HOST_MAX];
+	struct blob_attr *cur;
+	uint32_t ttl = 0;
+
+	blobmsg_parse(qosify_dns_policy, __CL_DNS_HOST_MAX, tb,
+		      blobmsg_data(msg), blobmsg_len(msg));
+
+	if (!tb[CL_DNS_HOST_NAME] || !tb[CL_DNS_HOST_TYPE] ||
+	    !tb[CL_DNS_HOST_ADDR])
+		return UBUS_STATUS_INVALID_ARGUMENT;
+
+	if ((cur = tb[CL_DNS_HOST_TTL]) != NULL)
+		ttl = blobmsg_get_u32(cur);
+
+	if (qosify_map_add_dns_host(blobmsg_get_string(tb[CL_DNS_HOST_NAME]),
+				    blobmsg_get_string(tb[CL_DNS_HOST_ADDR]),
+				    blobmsg_get_string(tb[CL_DNS_HOST_TYPE]),
+				    ttl))
+		return UBUS_STATUS_INVALID_ARGUMENT;
+
+	return 0;
+}
 
 static const struct ubus_method qosify_methods[] = {
 	UBUS_METHOD_NOARG("reload", qosify_ubus_reload),
@@ -277,6 +319,7 @@ static const struct ubus_method qosify_methods[] = {
 	UBUS_METHOD("config", qosify_ubus_config, qosify_config_policy),
 	UBUS_METHOD_NOARG("dump", qosify_ubus_dump),
 	UBUS_METHOD_NOARG("status", qosify_ubus_status),
+	UBUS_METHOD("add_dns_host", qosify_ubus_add_dns_host, qosify_dns_policy),
 	UBUS_METHOD_NOARG("check_devices", qosify_ubus_check_devices),
 };
 

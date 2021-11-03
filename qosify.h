@@ -79,6 +79,7 @@ void qosify_map_dump(struct blob_buf *b);
 void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val);
 void qosify_map_reset_config(void);
 void qosify_map_update_config(void);
+int qosify_map_add_dns_host(const char *host, const char *addr, const char *type, int ttl);
 
 int qosify_iface_init(void);
 void qosify_iface_config_update(struct blob_attr *ifaces, struct blob_attr *devs);
