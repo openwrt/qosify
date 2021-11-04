@@ -66,7 +66,7 @@ struct qosify_map_entry {
 extern int qosify_map_timeout;
 extern struct qosify_config config;
 
-int qosify_loader_init(bool force_init);
+int qosify_loader_init(void);
 
 int qosify_map_init(void);
 int qosify_map_dscp_value(const char *val);

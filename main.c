@@ -14,7 +14,6 @@ static int usage(const char *progname)
 {
 	fprintf(stderr, "Usage: %s [options]\n"
 		"Options:\n"
-		"	-f:		force reload of BPF programs\n"
 		"	-l <file>	Load defaults from <file>\n"
 		"	-o		only load program/maps without running as daemon\n"
 		"\n", progname);
@@ -25,14 +24,12 @@ static int usage(const char *progname)
 int main(int argc, char **argv)
 {
 	const char *load_file = NULL;
-	bool force_init = false;
 	bool oneshot = false;
 	int ch;
 
 	while ((ch = getopt(argc, argv, "fl:o")) != -1) {
 		switch (ch) {
 		case 'f':
-			force_init = true;
 			break;
 		case 'l':
 			load_file = optarg;
@@ -45,7 +42,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (qosify_loader_init(force_init))
+	if (qosify_loader_init())
 		return 2;
 
 	if (qosify_map_init())
