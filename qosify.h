@@ -64,6 +64,7 @@ struct qosify_map_entry {
 
 
 extern int qosify_map_timeout;
+extern int qosify_active_timeout;
 extern struct qosify_config config;
 
 int qosify_loader_init(void);

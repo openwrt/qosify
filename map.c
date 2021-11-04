@@ -21,7 +21,8 @@ static AVL_TREE(map_data, qosify_map_entry_cmp, false, NULL);
 static LIST_HEAD(map_files);
 static uint32_t next_timeout;
 static uint8_t qosify_dscp_default[2] = { 0xff, 0xff };
-int qosify_map_timeout = 3600;
+int qosify_map_timeout;
+int qosify_active_timeout;
 struct qosify_config config;
 
 struct qosify_map_file {
@@ -282,8 +283,14 @@ static void __qosify_map_set_entry(struct qosify_map_data *data)
 		e->data.dscp = e->data.file_dscp;
 	}
 
-	if (e->data.dscp != prev_dscp && data->id < CL_MAP_DNS)
-		bpf_map_update_elem(fd, &data->addr, &e->data.dscp, BPF_ANY);
+	if (e->data.dscp != prev_dscp && data->id < CL_MAP_DNS) {
+		struct qosify_ip_map_val val = {
+			.dscp = e->data.dscp,
+			.seen = 1,
+		};
+
+		bpf_map_update_elem(fd, &data->addr, &val, BPF_ANY);
+	}
 
 	if (add) {
 		if (qosify_map_timeout == ~0 || file) {
@@ -524,6 +531,7 @@ void qosify_map_reset_config(void)
 	qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, 0);
 	qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, 0);
 	qosify_map_timeout = 3600;
+	qosify_active_timeout = 60;
 
 	memset(&config, 0, sizeof(config));
 	config.dscp_prio = 0xff;
@@ -553,6 +561,29 @@ static void qosify_map_free_entry(struct qosify_map_entry *e)
 	free(e);
 }
 
+static bool
+qosify_map_entry_refresh_timeout(struct qosify_map_entry *e)
+{
+	struct qosify_ip_map_val val;
+	int fd = qosify_map_fds[e->data.id];
+
+	if (e->data.id != CL_MAP_IPV4_ADDR &&
+	    e->data.id != CL_MAP_IPV6_ADDR)
+		return false;
+
+	if (bpf_map_lookup_elem(fd, &e->data.addr, &val))
+		return false;
+
+	if (!val.seen)
+		return false;
+
+	e->timeout = qosify_gettime() + qosify_active_timeout;
+	val.seen = 0;
+	bpf_map_update_elem(fd, &e->data.addr, &val, BPF_ANY);
+
+	return true;
+}
+
 void qosify_map_gc(void)
 {
 	struct qosify_map_entry *e, *tmp;
@@ -565,6 +596,9 @@ void qosify_map_gc(void)
 
 		if (e->data.user && e->timeout != ~0) {
 			cur_timeout = e->timeout - cur_time;
+			if (cur_timeout <= 0 &&
+			    qosify_map_entry_refresh_timeout(e))
+				cur_timeout = e->timeout - cur_time;
 			if (cur_timeout <= 0) {
 				e->data.user = false;
 				e->data.dscp = e->data.file_dscp;

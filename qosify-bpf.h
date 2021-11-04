@@ -31,4 +31,9 @@ struct qosify_config {
 	uint16_t prio_max_avg_pkt_len;
 };
 
+struct qosify_ip_map_val {
+	uint8_t dscp; /* must be first */
+	uint8_t seen;
+};
+
 #endif
