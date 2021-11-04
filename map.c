@@ -69,6 +69,7 @@ static const struct {
 	{ "EF", 46 },
 	{ "VA", 44 },
 	{ "LE", 1 },
+	{ "DF", 0 },
 };
 
 static void qosify_map_timer_cb(struct uloop_timeout *t)
