@@ -532,7 +532,7 @@ void qosify_map_reset_config(void)
 	qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, 0);
 	qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, 0);
 	qosify_map_timeout = 3600;
-	qosify_active_timeout = 60;
+	qosify_active_timeout = 300;
 
 	memset(&config, 0, sizeof(config));
 	config.dscp_prio = 0xff;
