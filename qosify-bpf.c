@@ -250,7 +250,7 @@ parse_l4proto(struct qosify_config *config, struct __sk_buff *skb,
 	*dscp_out = *value;
 }
 
-static void
+static __always_inline void
 check_flow(struct qosify_config *config, struct __sk_buff *skb,
 	   uint8_t *dscp)
 {
