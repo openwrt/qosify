@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <time.h>
+#include <fnmatch.h>
 
 #include <libubox/uloop.h>
 
@@ -225,6 +226,7 @@ __qosify_map_alloc_entry(struct qosify_map_data *data)
 {
 	struct qosify_map_entry *e;
 	char *pattern;
+	char *c;
 
 	if (data->id < CL_MAP_DNS) {
 		e = calloc(1, sizeof(*e));
@@ -236,8 +238,13 @@ __qosify_map_alloc_entry(struct qosify_map_data *data)
 	e = calloc_a(sizeof(*e), &pattern, strlen(data->addr.dns.pattern) + 1);
 	strcpy(pattern, data->addr.dns.pattern);
 	e->data.addr.dns.pattern = pattern;
-	if (regcomp(&e->data.addr.dns.regex, pattern,
-		    REG_EXTENDED | REG_ICASE | REG_NOSUB)) {
+
+	for (c = pattern; *c; c++)
+		*c = tolower(*c);
+
+	if (pattern[0] == '/' &&
+	    regcomp(&e->data.addr.dns.regex, pattern + 1,
+		    REG_EXTENDED | REG_NOSUB)) {
 		free(e);
 		return NULL;
 	}
@@ -622,7 +629,7 @@ void qosify_map_gc(void)
 }
 
 
-int qosify_map_add_dns_host(const char *host, const char *addr, const char *type, int ttl)
+int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int ttl)
 {
 	struct qosify_map_data data = {
 		.id = CL_MAP_DNS,
@@ -630,6 +637,7 @@ int qosify_map_add_dns_host(const char *host, const char *addr, const char *type
 	};
 	struct qosify_map_entry *e;
 	int prev_timeout = qosify_map_timeout;
+	char *c;
 
 	e = avl_find_ge_element(&map_data, &data, e, avl);
 	if (!e)
@@ -647,14 +655,22 @@ int qosify_map_add_dns_host(const char *host, const char *addr, const char *type
 	if (qosify_map_fill_ip(&data, addr))
 		return -1;
 
+	for (c = host; *c; c++)
+		*c = tolower(*c);
+
 	avl_for_element_to_last(&map_data, e, e, avl) {
 		regex_t *regex = &e->data.addr.dns.regex;
 
 		if (e->data.id != CL_MAP_DNS)
 			return 0;
 
-		if (regexec(regex, host, 0, NULL, 0) != 0)
-			continue;
+		if (e->data.addr.dns.pattern[0] == '/') {
+			if (regexec(regex, host, 0, NULL, 0) != 0)
+				continue;
+		} else {
+			if (fnmatch(e->data.addr.dns.pattern, host, 0))
+				continue;
+		}
 
 		if (ttl)
 			qosify_map_timeout = ttl;
