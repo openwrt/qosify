@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <fnmatch.h>
+#include <glob.h>
 
 #include <libubox/uloop.h>
 
@@ -463,20 +464,11 @@ qosify_map_parse_line(char *str)
 		qosify_map_set_entry(CL_MAP_IPV4_ADDR, true, key, dscp);
 }
 
-static int __qosify_map_load_file(const char *file)
+static void
+__qosify_map_load_file_data(FILE *f)
 {
 	char line[1024];
 	char *cur;
-	FILE *f;
-
-	if (!file)
-		return 0;
-
-	f = fopen(file, "r");
-	if (!f) {
-		fprintf(stderr, "Can't open data file %s\n", file);
-		return -1;
-	}
 
 	while (fgets(line, sizeof(line), f)) {
 		cur = strchr(line, '#');
@@ -494,7 +486,30 @@ static int __qosify_map_load_file(const char *file)
 		qosify_map_parse_line(line);
 	}
 
-	fclose(f);
+}
+
+static int
+__qosify_map_load_file(const char *file)
+{
+	glob_t gl;
+	FILE *f;
+	int i;
+
+	if (!file)
+		return 0;
+
+	glob(file, 0, NULL, &gl);
+
+	for (i = 0; i < gl.gl_pathc; i++) {
+		f = fopen(file, "r");
+		if (!f)
+			continue;
+
+		__qosify_map_load_file_data(f);
+		fclose(f);
+	}
+
+	globfree(&gl);
 
 	return 0;
 }
