@@ -397,7 +397,7 @@ qosify_ubus_event_cb(struct ubus_context *ctx, struct ubus_event_handler *ev,
 static void
 ubus_connect_handler(struct ubus_context *ctx)
 {
-	struct ubus_event_handler ev = {
+	static struct ubus_event_handler ev = {
 		.cb = qosify_ubus_event_cb
 	};
 
