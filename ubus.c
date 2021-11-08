@@ -290,9 +290,7 @@ static const struct blobmsg_policy qosify_dns_policy[__CL_DNS_HOST_MAX] = {
 };
 
 static int
-qosify_ubus_add_dns_host(struct ubus_context *ctx, struct ubus_object *obj,
-			 struct ubus_request_data *req, const char *method,
-			 struct blob_attr *msg)
+__qosify_ubus_add_dns_host(struct blob_attr *msg)
 {
 	struct blob_attr *tb[__CL_DNS_HOST_MAX];
 	struct blob_attr *cur;
@@ -317,6 +315,14 @@ qosify_ubus_add_dns_host(struct ubus_context *ctx, struct ubus_object *obj,
 	return 0;
 }
 
+static int
+qosify_ubus_add_dns_host(struct ubus_context *ctx, struct ubus_object *obj,
+			 struct ubus_request_data *req, const char *method,
+			 struct blob_attr *msg)
+{
+	return __qosify_ubus_add_dns_host(msg);
+}
+
 static const struct ubus_method qosify_methods[] = {
 	UBUS_METHOD_NOARG("reload", qosify_ubus_reload),
 	UBUS_METHOD("add", qosify_ubus_add, qosify_add_policy),
@@ -339,10 +345,65 @@ static struct ubus_object qosify_object = {
 	.n_methods = ARRAY_SIZE(qosify_methods),
 };
 
+static int
+qosify_dnsmasq_cb(struct ubus_context *ctx, struct ubus_object *obj,
+		  struct ubus_request_data *req, const char *method,
+		  struct blob_attr *msg)
+{
+	if (!strcmp(method, "dns_result"))
+		__qosify_ubus_add_dns_host(msg);
+
+	return 0;
+}
+
+static void
+qosify_subscribe_dnsmasq(struct ubus_context *ctx)
+{
+	static struct ubus_subscriber sub = {
+		.cb = qosify_dnsmasq_cb,
+	};
+	uint32_t id;
+
+	if (!sub.obj.id &&
+	    ubus_register_subscriber(ctx, &sub))
+		return;
+
+	if (ubus_lookup_id(ctx, "dnsmasq.dns", &id))
+		return;
+
+	ubus_subscribe(ctx, &sub, id);
+}
+
+static void
+qosify_ubus_event_cb(struct ubus_context *ctx, struct ubus_event_handler *ev,
+		     const char *type, struct blob_attr *msg)
+{
+	static const struct blobmsg_policy policy =
+		{ "path", BLOBMSG_TYPE_STRING };
+	struct blob_attr *attr;
+	const char *path;
+
+	blobmsg_parse(&policy, 1, &attr, blobmsg_data(msg), blobmsg_len(msg));
+
+	if (!attr)
+		return;
+
+	path = blobmsg_get_string(attr);
+	if (!strcmp(path, "dnsmasq.dns"))
+		qosify_subscribe_dnsmasq(ctx);
+}
+
+
 static void
 ubus_connect_handler(struct ubus_context *ctx)
 {
+	struct ubus_event_handler ev = {
+		.cb = qosify_ubus_event_cb
+	};
+
 	ubus_add_object(ctx, &qosify_object);
+	ubus_register_event_handler(ctx, &ev, "ubus.object.add");
+	qosify_subscribe_dnsmasq(ctx);
 }
 
 static struct ubus_auto_conn conn;
