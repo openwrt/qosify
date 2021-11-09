@@ -110,5 +110,4 @@ Adding a + in front of the value tells qosify to only override the DSCP value if
 
 
 Planned features:
-- Integration with dnsmasq to support hostname pattern based DSCP marking
 - Support for LAN host based priority
