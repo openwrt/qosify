@@ -22,7 +22,10 @@ static int qosify_map_fds[__CL_MAP_MAX];
 static AVL_TREE(map_data, qosify_map_entry_cmp, false, NULL);
 static LIST_HEAD(map_files);
 static uint32_t next_timeout;
-static uint8_t qosify_dscp_default[2] = { 0xff, 0xff };
+static struct qosify_dscp_val qosify_dscp_default[2] = {
+	{ 0xff, 0xff },
+	{ 0xff, 0xff }
+};
 int qosify_map_timeout;
 int qosify_active_timeout;
 struct qosify_config config;
@@ -134,7 +137,7 @@ static void qosify_map_clear_list(enum qosify_map_id id)
 		bpf_map_delete_elem(fd, &key);
 }
 
-static void __qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val)
+static void __qosify_map_set_dscp_default(enum qosify_map_id id, struct qosify_dscp_val *val)
 {
 	struct qosify_map_data data = {
 		.id = id,
@@ -142,18 +145,19 @@ static void __qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val)
 	int fd = qosify_map_fds[id];
 	int i;
 
-	val |= QOSIFY_DSCP_DEFAULT_FLAG;
+	val->ingress |= QOSIFY_DSCP_DEFAULT_FLAG;
+	val->egress |= QOSIFY_DSCP_DEFAULT_FLAG;
 
 	for (i = 0; i < (1 << 16); i++) {
 		data.addr.port = htons(i);
 		if (avl_find(&map_data, &data))
 			continue;
 
-		bpf_map_update_elem(fd, &data.addr, &val, BPF_ANY);
+		bpf_map_update_elem(fd, &data.addr, val, BPF_ANY);
 	}
 }
 
-void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val)
+void qosify_map_set_dscp_default(enum qosify_map_id id, struct qosify_dscp_val val)
 {
 	bool udp;
 
@@ -164,11 +168,11 @@ void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val)
 	else
 		return;
 
-	if (qosify_dscp_default[udp] == val)
+	if (!memcmp(&qosify_dscp_default[udp], &val, sizeof(val)))
 		return;
 
 	qosify_dscp_default[udp] = val;
-	__qosify_map_set_dscp_default(id, val);
+	__qosify_map_set_dscp_default(id, &qosify_dscp_default[udp]);
 }
 
 int qosify_map_init(void)
@@ -256,11 +260,11 @@ __qosify_map_alloc_entry(struct qosify_map_data *data)
 static void __qosify_map_set_entry(struct qosify_map_data *data)
 {
 	int fd = qosify_map_fds[data->id];
+	struct qosify_dscp_val prev_dscp = { 0xff, 0xff };
 	struct qosify_map_entry *e;
 	bool file = data->file;
 	int32_t delta = 0;
-	bool add = data->dscp != 0xff;
-	uint8_t prev_dscp = 0xff;
+	bool add = data->dscp.ingress != 0xff;
 
 	e = avl_find_element(&map_data, data, e, avl);
 	if (!e) {
@@ -292,7 +296,8 @@ static void __qosify_map_set_entry(struct qosify_map_data *data)
 		e->data.dscp = e->data.file_dscp;
 	}
 
-	if (e->data.dscp != prev_dscp && data->id < CL_MAP_DNS) {
+	if (memcmp(&e->data.dscp, &prev_dscp, sizeof(prev_dscp)) != 0 &&
+	    data->id < CL_MAP_DNS) {
 		struct qosify_ip_map_val val = {
 			.dscp = e->data.dscp,
 			.seen = 1,
@@ -359,7 +364,8 @@ qosify_map_fill_ip(struct qosify_map_data *data, const char *str)
 	return 0;
 }
 
-int qosify_map_set_entry(enum qosify_map_id id, bool file, const char *str, uint8_t dscp)
+int qosify_map_set_entry(enum qosify_map_id id, bool file, const char *str,
+			 struct qosify_dscp_val dscp)
 {
 	struct qosify_map_data data = {
 		.id = id,
@@ -388,7 +394,7 @@ int qosify_map_set_entry(enum qosify_map_id id, bool file, const char *str, uint
 	return 0;
 }
 
-int qosify_map_dscp_value(const char *val)
+int qosify_map_dscp_value(const char *val, struct qosify_dscp_val *dscp_val)
 {
 	unsigned long dscp;
 	char *err;
@@ -406,7 +412,9 @@ int qosify_map_dscp_value(const char *val)
 	if (dscp >= 64)
 		return -1;
 
-	return dscp + (fallback << 6);
+	dscp_val->ingress = dscp_val->egress = dscp + (fallback << 6);
+
+	return 0;
 }
 
 static void
@@ -435,7 +443,7 @@ static void
 qosify_map_parse_line(char *str)
 {
 	const char *key, *value;
-	int dscp;
+	struct qosify_dscp_val dscp;
 
 	str = str_skip(str, true);
 	key = str;
@@ -448,8 +456,7 @@ qosify_map_parse_line(char *str)
 	str = str_skip(str, true);
 	value = str;
 
-	dscp = qosify_map_dscp_value(value);
-	if (dscp < 0)
+	if (qosify_map_dscp_value(value, &dscp))
 		return;
 
 	if (!strncmp(key, "dns:", 4))
@@ -550,16 +557,21 @@ void qosify_map_clear_files(void)
 
 void qosify_map_reset_config(void)
 {
+	struct qosify_dscp_val val = {};
+
 	qosify_map_clear_files();
-	qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, 0);
-	qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, 0);
+	qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, val);
+	qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, val);
 	qosify_map_timeout = 3600;
 	qosify_active_timeout = 300;
 
 	memset(&config, 0, sizeof(config));
-	config.dscp_prio = 0xff;
-	config.dscp_bulk = 0xff;
-	config.dscp_icmp = 0xff;
+	config.dscp_prio.ingress = 0xff;
+	config.dscp_prio.egress = 0xff;
+	config.dscp_bulk.ingress = 0xff;
+	config.dscp_bulk.egress = 0xff;
+	config.dscp_icmp.ingress = 0xff;
+	config.dscp_icmp.egress = 0xff;
 }
 
 void qosify_map_reload(void)
@@ -697,6 +709,17 @@ int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int 
 	return 0;
 }
 
+static void
+blobmsg_add_dscp(struct blob_buf *b, const char *name, uint8_t dscp)
+{
+	int buf_len = 8;
+	char *buf;
+
+	buf = blobmsg_alloc_string_buffer(b, name, buf_len);
+	qosify_map_dscp_codepoint_str(buf, buf_len, dscp);
+	blobmsg_add_string_buffer(b);
+}
+
 
 void qosify_map_dump(struct blob_buf *b)
 {
@@ -727,9 +750,8 @@ void qosify_map_dump(struct blob_buf *b)
 		blobmsg_add_u8(b, "file", e->data.file);
 		blobmsg_add_u8(b, "user", e->data.user);
 
-		buf = blobmsg_alloc_string_buffer(b, "dscp", buf_len);
-		qosify_map_dscp_codepoint_str(buf, buf_len, e->data.dscp);
-		blobmsg_add_string_buffer(b);
+		blobmsg_add_dscp(b, "dscp_ingress", e->data.dscp.ingress);
+		blobmsg_add_dscp(b, "dscp_egress", e->data.dscp.egress);
 
 		blobmsg_add_string(b, "type", qosify_map_info[e->data.id].type_name);
 
@@ -749,7 +771,6 @@ void qosify_map_dump(struct blob_buf *b)
 			blobmsg_add_string(b, "addr", e->data.addr.dns.pattern);
 			break;
 		default:
-			*buf = 0;
 			break;
 		}
 		blobmsg_close_table(b, c);

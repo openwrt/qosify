@@ -19,11 +19,16 @@
 #define QOSIFY_DSCP_FALLBACK_FLAG	(1 << 6)
 #define QOSIFY_DSCP_DEFAULT_FLAG	(1 << 7)
 
+struct qosify_dscp_val {
+	uint8_t ingress;
+	uint8_t egress;
+};
+
 /* global config data */
 struct qosify_config {
-	uint8_t dscp_prio;
-	uint8_t dscp_bulk;
-	uint8_t dscp_icmp;
+	struct qosify_dscp_val dscp_prio;
+	struct qosify_dscp_val dscp_bulk;
+	struct qosify_dscp_val dscp_icmp;
 
 	uint8_t bulk_trigger_timeout;
 	uint16_t bulk_trigger_pps;
@@ -32,7 +37,7 @@ struct qosify_config {
 };
 
 struct qosify_ip_map_val {
-	uint8_t dscp; /* must be first */
+	struct qosify_dscp_val dscp; /* must be first */
 	uint8_t seen;
 };
 

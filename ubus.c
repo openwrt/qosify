@@ -9,7 +9,8 @@
 static struct blob_buf b;
 
 static int
-qosify_ubus_add_array(struct blob_attr *attr, uint8_t val, enum qosify_map_id id)
+qosify_ubus_add_array(struct blob_attr *attr, struct qosify_dscp_val val,
+		      enum qosify_map_id id)
 {
 	struct blob_attr *cur;
 	int rem;
@@ -83,24 +84,19 @@ qosify_ubus_add(struct ubus_context *ctx, struct ubus_object *obj,
 	int prev_timemout = qosify_map_timeout;
 	struct blob_attr *tb[__CL_ADD_MAX];
 	struct blob_attr *cur;
-	int dscp = -1;
+	struct qosify_dscp_val dscp = { 0xff, 0xff };
 	int ret;
 
 	blobmsg_parse(qosify_add_policy, __CL_ADD_MAX, tb,
 		      blobmsg_data(msg), blobmsg_len(msg));
 
 	if (!strcmp(method, "add")) {
-		if ((cur = tb[CL_ADD_DSCP]) != NULL)
-			dscp = qosify_map_dscp_value(blobmsg_get_string(cur));
-		else
-			return UBUS_STATUS_INVALID_ARGUMENT;
-		if (dscp < 0)
+		if ((cur = tb[CL_ADD_DSCP]) == NULL ||
+		    qosify_map_dscp_value(blobmsg_get_string(cur), &dscp))
 			return UBUS_STATUS_INVALID_ARGUMENT;
 
 		if ((cur = tb[CL_ADD_TIMEOUT]) != NULL)
 			qosify_map_timeout = blobmsg_get_u32(cur);
-	} else {
-		dscp = 0xff;
 	}
 
 	if ((cur = tb[CL_ADD_IPV4]) != NULL &&
@@ -161,21 +157,18 @@ static const struct blobmsg_policy qosify_config_policy[__CL_CONFIG_MAX] = {
 	[CL_CONFIG_DEVICES] = { "devices", BLOBMSG_TYPE_TABLE },
 };
 
-static int __set_dscp(uint8_t *dest, struct blob_attr *attr, bool reset)
+static int __set_dscp(struct qosify_dscp_val *dest, struct blob_attr *attr, bool reset)
 {
-	int dscp;
-
-	if (reset)
-		*dest = 0xff;
+	if (reset) {
+		 dest->ingress = 0xff;
+		 dest->egress = 0xff;
+	}
 
 	if (!attr)
 		return 0;
 
-	dscp = qosify_map_dscp_value(blobmsg_get_string(attr));
-	if (dscp < 0)
+	if (qosify_map_dscp_value(blobmsg_get_string(attr), dest))
 		return -1;
-
-	*dest = dscp;
 
 	return 0;
 }
@@ -187,7 +180,7 @@ qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
 {
 	struct blob_attr *tb[__CL_CONFIG_MAX];
 	struct blob_attr *cur;
-	uint8_t dscp;
+	struct qosify_dscp_val dscp;
 	bool reset = false;
 	int ret;
 
@@ -208,16 +201,17 @@ qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
 		return ret;
 
 	__set_dscp(&dscp, tb[CL_CONFIG_DSCP_UDP], true);
-	if (dscp != 0xff)
+	if (dscp.ingress != 0xff)
 		qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, dscp);
 
 	__set_dscp(&dscp, tb[CL_CONFIG_DSCP_TCP], true);
-	if (dscp != 0xff)
+	if (dscp.ingress != 0xff)
 		qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, dscp);
 
-	__set_dscp(&config.dscp_prio, tb[CL_CONFIG_DSCP_PRIO], reset);
-	__set_dscp(&config.dscp_bulk, tb[CL_CONFIG_DSCP_BULK], reset);
-	__set_dscp(&config.dscp_icmp, tb[CL_CONFIG_DSCP_ICMP], reset);
+	if (__set_dscp(&config.dscp_prio, tb[CL_CONFIG_DSCP_PRIO], reset) ||
+	    __set_dscp(&config.dscp_bulk, tb[CL_CONFIG_DSCP_BULK], reset) ||
+	    __set_dscp(&config.dscp_icmp, tb[CL_CONFIG_DSCP_ICMP], reset))
+		return UBUS_STATUS_INVALID_ARGUMENT;
 
 	if ((cur = tb[CL_CONFIG_BULK_TIMEOUT]) != NULL)
 		config.bulk_trigger_timeout = blobmsg_get_u32(cur);
