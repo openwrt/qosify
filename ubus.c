@@ -138,6 +138,7 @@ enum {
 	CL_CONFIG_PRIO_PKT_LEN,
 	CL_CONFIG_INTERFACES,
 	CL_CONFIG_DEVICES,
+	CL_CONFIG_ALIASES,
 	__CL_CONFIG_MAX
 };
 
@@ -155,6 +156,7 @@ static const struct blobmsg_policy qosify_config_policy[__CL_CONFIG_MAX] = {
 	[CL_CONFIG_PRIO_PKT_LEN] = { "prio_max_avg_pkt_len", BLOBMSG_TYPE_INT32 },
 	[CL_CONFIG_INTERFACES] = { "interfaces", BLOBMSG_TYPE_TABLE },
 	[CL_CONFIG_DEVICES] = { "devices", BLOBMSG_TYPE_TABLE },
+	[CL_CONFIG_ALIASES] = { "aliases", BLOBMSG_TYPE_TABLE },
 };
 
 static int __set_dscp(struct qosify_dscp_val *dest, struct blob_attr *attr, bool reset)
@@ -192,6 +194,9 @@ qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
 
 	if (reset)
 		qosify_map_reset_config();
+
+	if ((cur = tb[CL_CONFIG_ALIASES]) != NULL || reset)
+		qosify_map_set_aliases(cur);
 
 	if ((cur = tb[CL_CONFIG_TIMEOUT]) != NULL)
 		qosify_map_timeout = blobmsg_get_u32(cur);

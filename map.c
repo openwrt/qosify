@@ -13,6 +13,7 @@
 #include <glob.h>
 
 #include <libubox/uloop.h>
+#include <libubox/avl-cmp.h>
 
 #include "qosify.h"
 
@@ -21,6 +22,7 @@ static int qosify_map_entry_cmp(const void *k1, const void *k2, void *ptr);
 static int qosify_map_fds[__CL_MAP_MAX];
 static AVL_TREE(map_data, qosify_map_entry_cmp, false, NULL);
 static LIST_HEAD(map_files);
+static AVL_TREE(map_aliases, avl_strcmp, false, NULL);
 static uint32_t next_timeout;
 static struct qosify_dscp_val qosify_dscp_default[2] = {
 	{ 0xff, 0xff },
@@ -33,6 +35,11 @@ struct qosify_config config;
 struct qosify_map_file {
 	struct list_head list;
 	char filename[];
+};
+
+struct qosify_map_alias {
+	struct avl_node avl;
+	struct qosify_dscp_val value;
 };
 
 static const struct {
@@ -394,11 +401,12 @@ int qosify_map_set_entry(enum qosify_map_id id, bool file, const char *str,
 	return 0;
 }
 
-int qosify_map_dscp_value(const char *val, struct qosify_dscp_val *dscp_val)
+static int
+__qosify_map_dscp_value(const char *val, uint8_t *dscp_val)
 {
 	unsigned long dscp;
-	char *err;
 	bool fallback = false;
+	char *err;
 
 	if (*val == '+') {
 		fallback = true;
@@ -412,7 +420,35 @@ int qosify_map_dscp_value(const char *val, struct qosify_dscp_val *dscp_val)
 	if (dscp >= 64)
 		return -1;
 
-	dscp_val->ingress = dscp_val->egress = dscp + (fallback << 6);
+	*dscp_val = dscp | (fallback << 6);
+
+	return 0;
+}
+
+int qosify_map_dscp_value(const char *val, struct qosify_dscp_val *dscp_val)
+{
+	struct qosify_map_alias *alias;
+	bool fallback = false;
+
+	if (*val == '+') {
+		fallback = true;
+		val++;
+	}
+
+	alias = avl_find_element(&map_aliases, val, alias, avl);
+	if (alias) {
+		*dscp_val = alias->value;
+	} else {
+		if (__qosify_map_dscp_value(val, &dscp_val->egress))
+			return -1;
+
+		dscp_val->ingress = dscp_val->egress;
+	}
+
+	if (fallback) {
+		dscp_val->ingress |= (1 << 6);
+		dscp_val->egress |= (1 << 6);
+	}
 
 	return 0;
 }
@@ -776,6 +812,60 @@ void qosify_map_dump(struct blob_buf *b)
 		blobmsg_close_table(b, c);
 	}
 	blobmsg_close_array(b, a);
+}
+
+static int
+qosify_map_create_alias(struct blob_attr *attr)
+{
+	struct qosify_map_alias *alias;
+	enum {
+		MAP_ALIAS_INGRESS,
+		MAP_ALIAS_EGRESS,
+		__MAP_ALIAS_MAX
+	};
+	static const struct blobmsg_policy policy[__MAP_ALIAS_MAX] = {
+		[MAP_ALIAS_INGRESS] = { .type = BLOBMSG_TYPE_STRING },
+		[MAP_ALIAS_EGRESS] = { .type = BLOBMSG_TYPE_STRING },
+	};
+	struct blob_attr *tb[__MAP_ALIAS_MAX];
+	const char *name;
+	char *name_buf;
+
+	if (blobmsg_check_array(attr, BLOBMSG_TYPE_STRING) != 2)
+		return -1;
+
+	blobmsg_parse_array(policy, __MAP_ALIAS_MAX, tb,
+			    blobmsg_data(attr), blobmsg_len(attr));
+
+	if (!tb[MAP_ALIAS_INGRESS] || !tb[MAP_ALIAS_EGRESS])
+		return -1;
+
+	name = blobmsg_name(attr);
+	alias = calloc_a(sizeof(*alias), &name_buf, strlen(name) + 1);
+	alias->avl.key = strcpy(name_buf, name);
+	if (__qosify_map_dscp_value(blobmsg_get_string(tb[MAP_ALIAS_INGRESS]),
+				    &alias->value.ingress) ||
+	    __qosify_map_dscp_value(blobmsg_get_string(tb[MAP_ALIAS_EGRESS]),
+				    &alias->value.egress) ||
+	    avl_insert(&map_aliases, &alias->avl)) {
+		free(alias);
+		return -1;
+	}
+
+	return 0;
+}
+
+void qosify_map_set_aliases(struct blob_attr *val)
+{
+	struct qosify_map_alias *alias, *tmp;
+	struct blob_attr *cur;
+	int rem;
+
+	avl_remove_all_elements(&map_aliases, alias, avl, tmp)
+		free(alias);
+
+	blobmsg_for_each_attr(cur, val, rem)
+		qosify_map_create_alias(cur);
 }
 
 void qosify_map_update_config(void)
