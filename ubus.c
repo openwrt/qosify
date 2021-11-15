@@ -344,22 +344,11 @@ static struct ubus_object qosify_object = {
 	.n_methods = ARRAY_SIZE(qosify_methods),
 };
 
-static int
-qosify_dnsmasq_cb(struct ubus_context *ctx, struct ubus_object *obj,
-		  struct ubus_request_data *req, const char *method,
-		  struct blob_attr *msg)
-{
-	if (!strcmp(method, "dns_result"))
-		__qosify_ubus_add_dns_host(msg);
-
-	return 0;
-}
-
 static void
 qosify_subscribe_dnsmasq(struct ubus_context *ctx)
 {
 	static struct ubus_subscriber sub = {
-		.cb = qosify_dnsmasq_cb,
+		.cb = qosify_ubus_add_dns_host,
 	};
 	uint32_t id;
 
