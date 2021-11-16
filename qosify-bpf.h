@@ -15,14 +15,16 @@
 #define QOSIFY_INGRESS			(1 << 0)
 #define QOSIFY_IP_ONLY			(1 << 1)
 
-
 #define QOSIFY_DSCP_FALLBACK_FLAG	(1 << 6)
-#define QOSIFY_DSCP_DEFAULT_FLAG	(1 << 7)
+
+#define QOSIFY_VAL_FLAG_PRIO_CHECK	(1 << 0)
+#define QOSIFY_VAL_FLAG_BULK_CHECK	(1 << 1)
 
 struct qosify_dscp_val {
 	uint8_t ingress;
 	uint8_t egress;
-};
+	uint8_t flags;
+} __attribute__((packed));
 
 /* global config data */
 struct qosify_config {

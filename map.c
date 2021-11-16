@@ -152,8 +152,8 @@ static void __qosify_map_set_dscp_default(enum qosify_map_id id, struct qosify_d
 	int fd = qosify_map_fds[id];
 	int i;
 
-	val->ingress |= QOSIFY_DSCP_DEFAULT_FLAG;
-	val->egress |= QOSIFY_DSCP_DEFAULT_FLAG;
+	val->flags |= QOSIFY_VAL_FLAG_PRIO_CHECK |
+		      QOSIFY_VAL_FLAG_BULK_CHECK;
 
 	for (i = 0; i < (1 << 16); i++) {
 		data.addr.port = htons(i);
