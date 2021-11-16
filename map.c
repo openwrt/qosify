@@ -602,10 +602,10 @@ void qosify_map_reset_config(void)
 	qosify_active_timeout = 300;
 
 	memset(&config, 0, sizeof(config));
-	config.dscp_prio.ingress = 0xff;
-	config.dscp_prio.egress = 0xff;
-	config.dscp_bulk.ingress = 0xff;
-	config.dscp_bulk.egress = 0xff;
+	config.flow.dscp_prio.ingress = 0xff;
+	config.flow.dscp_prio.egress = 0xff;
+	config.flow.dscp_bulk.ingress = 0xff;
+	config.flow.dscp_bulk.egress = 0xff;
 	config.dscp_icmp.ingress = 0xff;
 	config.dscp_icmp.egress = 0xff;
 }

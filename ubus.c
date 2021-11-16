@@ -213,19 +213,19 @@ qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
 	if (dscp.ingress != 0xff)
 		qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, dscp);
 
-	if (__set_dscp(&config.dscp_prio, tb[CL_CONFIG_DSCP_PRIO], reset) ||
-	    __set_dscp(&config.dscp_bulk, tb[CL_CONFIG_DSCP_BULK], reset) ||
+	if (__set_dscp(&config.flow.dscp_prio, tb[CL_CONFIG_DSCP_PRIO], reset) ||
+	    __set_dscp(&config.flow.dscp_bulk, tb[CL_CONFIG_DSCP_BULK], reset) ||
 	    __set_dscp(&config.dscp_icmp, tb[CL_CONFIG_DSCP_ICMP], reset))
 		return UBUS_STATUS_INVALID_ARGUMENT;
 
 	if ((cur = tb[CL_CONFIG_BULK_TIMEOUT]) != NULL)
-		config.bulk_trigger_timeout = blobmsg_get_u32(cur);
+		config.flow.bulk_trigger_timeout = blobmsg_get_u32(cur);
 
 	if ((cur = tb[CL_CONFIG_BULK_PPS]) != NULL)
-		config.bulk_trigger_pps = blobmsg_get_u32(cur);
+		config.flow.bulk_trigger_pps = blobmsg_get_u32(cur);
 
 	if ((cur = tb[CL_CONFIG_PRIO_PKT_LEN]) != NULL)
-		config.prio_max_avg_pkt_len = blobmsg_get_u32(cur);
+		config.flow.prio_max_avg_pkt_len = blobmsg_get_u32(cur);
 
 	qosify_map_update_config();
 

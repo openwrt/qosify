@@ -27,15 +27,21 @@ struct qosify_dscp_val {
 } __attribute__((packed));
 
 /* global config data */
-struct qosify_config {
+
+struct qosify_flow_config {
 	struct qosify_dscp_val dscp_prio;
 	struct qosify_dscp_val dscp_bulk;
-	struct qosify_dscp_val dscp_icmp;
 
 	uint8_t bulk_trigger_timeout;
 	uint16_t bulk_trigger_pps;
 
 	uint16_t prio_max_avg_pkt_len;
+};
+
+struct qosify_config {
+	struct qosify_dscp_val dscp_icmp;
+
+	struct qosify_flow_config flow;
 };
 
 struct qosify_ip_map_val {

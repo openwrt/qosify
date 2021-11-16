@@ -255,7 +255,7 @@ parse_l4proto(struct qosify_config *config, struct __sk_buff *skb,
 }
 
 static __always_inline void
-check_flow_bulk(struct qosify_config *config, struct __sk_buff *skb,
+check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
 		struct flow_bucket *flow, struct qosify_dscp_val *out_val)
 {
 	bool trigger = false;
@@ -304,7 +304,7 @@ clear:
 }
 
 static __always_inline void
-check_flow_prio(struct qosify_config *config, struct __sk_buff *skb,
+check_flow_prio(struct qosify_flow_config *config, struct __sk_buff *skb,
 		struct flow_bucket *flow, struct qosify_dscp_val *out_val)
 {
 	if ((flow->val.flags & QOSIFY_VAL_FLAG_BULK_CHECK) ||
@@ -321,7 +321,7 @@ check_flow_prio(struct qosify_config *config, struct __sk_buff *skb,
 }
 
 static __always_inline void
-check_flow(struct qosify_config *config, struct __sk_buff *skb,
+check_flow(struct qosify_flow_config *config, struct __sk_buff *skb,
 	   struct qosify_dscp_val *out_val)
 {
 	struct flow_bucket flow_data;
@@ -438,6 +438,8 @@ int classify(struct __sk_buff *skb)
 	int type;
 
 	config = get_config();
+	if (!config)
+		return TC_ACT_OK;
 
 	if (module_flags & QOSIFY_IP_ONLY)
 		type = skb->protocol;
@@ -458,7 +460,7 @@ int classify(struct __sk_buff *skb)
 		val = ip_val->dscp;
 	}
 
-	check_flow(config, skb, &val);
+	check_flow(&config->flow, skb, &val);
 
 	dscp = dscp_val(&val, ingress);
 	if (dscp == 0xff)
