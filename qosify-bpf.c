@@ -283,6 +283,7 @@ check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
 	bool trigger = false;
 	__s32 delta;
 	__u32 time;
+	int segs = 1;
 
 	if (!config->bulk_trigger_pps)
 		return;
@@ -295,7 +296,9 @@ check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
 	if ((u32)delta > FLOW_TIMEOUT)
 		goto reset;
 
-	flow->pkt_count++;
+	if (skb->gso_size && skb->gso_segs)
+		segs = skb->gso_segs;
+	flow->pkt_count += segs;
 	if (flow->pkt_count > config->bulk_trigger_pps) {
 		flow->bulk_timeout = config->bulk_trigger_timeout + 1;
 		trigger = true;
