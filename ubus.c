@@ -9,8 +9,7 @@
 static struct blob_buf b;
 
 static int
-qosify_ubus_add_array(struct blob_attr *attr, struct qosify_dscp_val val,
-		      enum qosify_map_id id)
+qosify_ubus_add_array(struct blob_attr *attr, uint8_t val, enum qosify_map_id id)
 {
 	struct blob_attr *cur;
 	int rem;
@@ -84,7 +83,7 @@ qosify_ubus_add(struct ubus_context *ctx, struct ubus_object *obj,
 	int prev_timemout = qosify_map_timeout;
 	struct blob_attr *tb[__CL_ADD_MAX];
 	struct blob_attr *cur;
-	struct qosify_dscp_val dscp = { 0xff, 0xff };
+	uint8_t dscp = 0xff;
 	int ret;
 
 	blobmsg_parse(qosify_add_policy, __CL_ADD_MAX, tb,
@@ -130,15 +129,10 @@ enum {
 	CL_CONFIG_TIMEOUT,
 	CL_CONFIG_DSCP_UDP,
 	CL_CONFIG_DSCP_TCP,
-	CL_CONFIG_DSCP_PRIO,
-	CL_CONFIG_DSCP_BULK,
 	CL_CONFIG_DSCP_ICMP,
-	CL_CONFIG_BULK_TIMEOUT,
-	CL_CONFIG_BULK_PPS,
-	CL_CONFIG_PRIO_PKT_LEN,
 	CL_CONFIG_INTERFACES,
 	CL_CONFIG_DEVICES,
-	CL_CONFIG_ALIASES,
+	CL_CONFIG_CLASSES,
 	__CL_CONFIG_MAX
 };
 
@@ -148,32 +142,11 @@ static const struct blobmsg_policy qosify_config_policy[__CL_CONFIG_MAX] = {
 	[CL_CONFIG_TIMEOUT] = { "timeout", BLOBMSG_TYPE_INT32 },
 	[CL_CONFIG_DSCP_UDP] = { "dscp_default_udp", BLOBMSG_TYPE_STRING },
 	[CL_CONFIG_DSCP_TCP] = { "dscp_default_tcp", BLOBMSG_TYPE_STRING },
-	[CL_CONFIG_DSCP_PRIO] = { "dscp_prio", BLOBMSG_TYPE_STRING },
-	[CL_CONFIG_DSCP_BULK] = { "dscp_bulk", BLOBMSG_TYPE_STRING },
 	[CL_CONFIG_DSCP_ICMP] = { "dscp_icmp", BLOBMSG_TYPE_STRING },
-	[CL_CONFIG_BULK_TIMEOUT] = { "bulk_trigger_timeout", BLOBMSG_TYPE_INT32 },
-	[CL_CONFIG_BULK_PPS] = { "bulk_trigger_pps", BLOBMSG_TYPE_INT32 },
-	[CL_CONFIG_PRIO_PKT_LEN] = { "prio_max_avg_pkt_len", BLOBMSG_TYPE_INT32 },
 	[CL_CONFIG_INTERFACES] = { "interfaces", BLOBMSG_TYPE_TABLE },
 	[CL_CONFIG_DEVICES] = { "devices", BLOBMSG_TYPE_TABLE },
-	[CL_CONFIG_ALIASES] = { "aliases", BLOBMSG_TYPE_TABLE },
+	[CL_CONFIG_CLASSES] = { "classes", BLOBMSG_TYPE_TABLE },
 };
-
-static int __set_dscp(struct qosify_dscp_val *dest, struct blob_attr *attr, bool reset)
-{
-	if (reset) {
-		 dest->ingress = 0xff;
-		 dest->egress = 0xff;
-	}
-
-	if (!attr)
-		return 0;
-
-	if (qosify_map_dscp_value(blobmsg_get_string(attr), dest))
-		return -1;
-
-	return 0;
-}
 
 static int
 qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
@@ -182,7 +155,7 @@ qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
 {
 	struct blob_attr *tb[__CL_CONFIG_MAX];
 	struct blob_attr *cur;
-	struct qosify_dscp_val dscp;
+	uint8_t dscp;
 	bool reset = false;
 	int ret;
 
@@ -195,8 +168,8 @@ qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
 	if (reset)
 		qosify_map_reset_config();
 
-	if ((cur = tb[CL_CONFIG_ALIASES]) != NULL || reset)
-		qosify_map_set_aliases(cur);
+	if ((cur = tb[CL_CONFIG_CLASSES]) != NULL || reset)
+		qosify_map_set_classes(cur);
 
 	if ((cur = tb[CL_CONFIG_TIMEOUT]) != NULL)
 		qosify_map_timeout = blobmsg_get_u32(cur);
@@ -205,27 +178,17 @@ qosify_ubus_config(struct ubus_context *ctx, struct ubus_object *obj,
 	    (ret = qosify_ubus_set_files(cur) != 0))
 		return ret;
 
-	__set_dscp(&dscp, tb[CL_CONFIG_DSCP_UDP], true);
-	if (dscp.ingress != 0xff)
-		qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, dscp);
-
-	__set_dscp(&dscp, tb[CL_CONFIG_DSCP_TCP], true);
-	if (dscp.ingress != 0xff)
-		qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, dscp);
-
-	if (__set_dscp(&config.flow.dscp_prio, tb[CL_CONFIG_DSCP_PRIO], reset) ||
-	    __set_dscp(&config.flow.dscp_bulk, tb[CL_CONFIG_DSCP_BULK], reset) ||
-	    __set_dscp(&config.dscp_icmp, tb[CL_CONFIG_DSCP_ICMP], reset))
+	if (map_parse_flow_config(&flow_config, msg, reset) ||
+	    map_fill_dscp_value(&config.dscp_icmp, tb[CL_CONFIG_DSCP_ICMP], reset))
 		return UBUS_STATUS_INVALID_ARGUMENT;
 
-	if ((cur = tb[CL_CONFIG_BULK_TIMEOUT]) != NULL)
-		config.flow.bulk_trigger_timeout = blobmsg_get_u32(cur);
+	map_fill_dscp_value(&dscp, tb[CL_CONFIG_DSCP_UDP], true);
+	if (dscp != 0xff)
+		qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, dscp);
 
-	if ((cur = tb[CL_CONFIG_BULK_PPS]) != NULL)
-		config.flow.bulk_trigger_pps = blobmsg_get_u32(cur);
-
-	if ((cur = tb[CL_CONFIG_PRIO_PKT_LEN]) != NULL)
-		config.flow.prio_max_avg_pkt_len = blobmsg_get_u32(cur);
+	map_fill_dscp_value(&dscp, tb[CL_CONFIG_DSCP_TCP], true);
+	if (dscp != 0xff)
+		qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, dscp);
 
 	qosify_map_update_config();
 

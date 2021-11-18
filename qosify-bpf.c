@@ -32,10 +32,9 @@ const volatile static uint32_t module_flags = 0;
 struct flow_bucket {
 	__u32 last_update;
 	__u32 pkt_len_avg;
-	__u16 pkt_count;
-	struct qosify_dscp_val val;
-	__u8 bulk_timeout;
-} __packed;
+	__u32 pkt_count;
+	__u32 bulk_timeout;
+};
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -49,7 +48,7 @@ typedef struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(pinning, 1);
 	__type(key, __u32);
-	__type(value, struct qosify_dscp_val);
+	__type(value, __u8);
 	__uint(max_entries, 1 << 16);
 } port_array_t;
 
@@ -57,7 +56,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(pinning, 1);
 	__type(key, __u32);
-	__uint(value_size, sizeof(struct flow_bucket));
+	__type(value, struct flow_bucket);
 	__uint(max_entries, QOSIFY_FLOW_BUCKETS);
 } flow_map SEC(".maps");
 
@@ -81,6 +80,15 @@ struct {
 	__uint(max_entries, 100000);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } ipv6_map SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(pinning, 1);
+	__type(key, __u32);
+	__type(value, struct qosify_class);
+	__uint(max_entries, QOSIFY_MAX_CLASS_ENTRIES +
+			    QOSIFY_DEFAULT_CLASS_ENTRIES);
+} class_map SEC(".maps");
 
 static struct qosify_config *get_config(void)
 {
@@ -150,11 +158,18 @@ static __always_inline __u8 dscp_val(struct qosify_dscp_val *val, bool ingress)
 }
 
 static __always_inline void
-ipv4_change_dsfield(struct iphdr *iph, __u8 mask, __u8 value, bool force)
+ipv4_change_dsfield(struct __sk_buff *skb, __u32 offset,
+		    __u8 mask, __u8 value, bool force)
 {
-	__u32 check = bpf_ntohs(iph->check);
+	struct iphdr *iph;
+	__u32 check;
 	__u8 dsfield;
 
+	iph = skb_ptr(skb, offset);
+	if (skb_check(skb, iph + 1))
+		return;
+
+	check = bpf_ntohs(iph->check);
 	if ((iph->tos & mask) && !force)
 		return;
 
@@ -172,11 +187,18 @@ ipv4_change_dsfield(struct iphdr *iph, __u8 mask, __u8 value, bool force)
 }
 
 static __always_inline void
-ipv6_change_dsfield(struct ipv6hdr *ipv6h, __u8 mask, __u8 value, bool force)
+ipv6_change_dsfield(struct __sk_buff *skb, __u32 offset,
+		    __u8 mask, __u8 value, bool force)
 {
-	__u16 *p = (__u16 *)ipv6h;
+	struct ipv6hdr *ipv6h;
+	__u16 *p;
 	__u16 val;
 
+	ipv6h = skb_ptr(skb, offset);
+	if (skb_check(skb, ipv6h + 1))
+		return;
+
+	p = (__u16 *)ipv6h;
 	if (((*p >> 4) & mask) && !force)
 		return;
 
@@ -221,11 +243,11 @@ parse_ethernet(struct __sk_buff *skb, __u32 *offset)
 static void
 parse_l4proto(struct qosify_config *config, struct __sk_buff *skb,
 	      __u32 offset, __u8 proto, bool ingress,
-	      struct qosify_dscp_val *out_val)
+	      __u8 *out_val)
 {
-	struct qosify_dscp_val *value;
 	struct udphdr *udp;
 	__u32 src, dest, key;
+	__u8 *value;
 
 	udp = skb_ptr(skb, offset);
 	if (skb_check(skb, &udp->len))
@@ -256,7 +278,7 @@ parse_l4proto(struct qosify_config *config, struct __sk_buff *skb,
 
 static __always_inline void
 check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
-		struct flow_bucket *flow, struct qosify_dscp_val *out_val)
+		struct flow_bucket *flow, __u8 *out_val)
 {
 	bool trigger = false;
 	__s32 delta;
@@ -265,72 +287,58 @@ check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
 	if (!config->bulk_trigger_pps)
 		return;
 
+	time = cur_time();
 	if (!flow->last_update)
 		goto reset;
 
-	time = cur_time();
 	delta = time - flow->last_update;
 	if ((u32)delta > FLOW_TIMEOUT)
 		goto reset;
 
-	if (flow->pkt_count < 0xffff)
-		flow->pkt_count++;
-
+	flow->pkt_count++;
 	if (flow->pkt_count > config->bulk_trigger_pps) {
-		flow->val = config->dscp_bulk;
-		flow->val.flags = QOSIFY_VAL_FLAG_BULK_CHECK;
 		flow->bulk_timeout = config->bulk_trigger_timeout + 1;
 		trigger = true;
 	}
 
 	if (delta >= FLOW_CHECK_INTERVAL) {
-		if (flow->bulk_timeout && !trigger) {
+		if (flow->bulk_timeout && !trigger)
 			flow->bulk_timeout--;
-			if (!flow->bulk_timeout)
-				flow->val.flags = 0;
-		}
 
 		goto clear;
 	}
 
-	return;
+	goto out;
 
 reset:
-	flow->val.flags = 0;
 	flow->pkt_len_avg = 0;
 clear:
 	flow->pkt_count = 1;
 	flow->last_update = time;
+out:
+	if (flow->bulk_timeout)
+		*out_val = config->dscp_bulk;
 }
 
 static __always_inline void
 check_flow_prio(struct qosify_flow_config *config, struct __sk_buff *skb,
-		struct flow_bucket *flow, struct qosify_dscp_val *out_val)
+		struct flow_bucket *flow, __u8 *out_val)
 {
-	if ((flow->val.flags & QOSIFY_VAL_FLAG_BULK_CHECK) ||
-	    !config->prio_max_avg_pkt_len)
+	if (flow->bulk_timeout)
 		return;
 
-	if (ewma(&flow->pkt_len_avg, skb->len) > config->prio_max_avg_pkt_len) {
-		flow->val.flags = 0;
-		return;
-	}
-
-	flow->val = config->dscp_prio;
-	flow->val.flags = QOSIFY_VAL_FLAG_PRIO_CHECK;
+	if (config->prio_max_avg_pkt_len &&
+	    ewma(&flow->pkt_len_avg, skb->len) <= config->prio_max_avg_pkt_len)
+		*out_val = config->dscp_prio;
 }
 
 static __always_inline void
 check_flow(struct qosify_flow_config *config, struct __sk_buff *skb,
-	   struct qosify_dscp_val *out_val)
+	   __u8 *out_val)
 {
 	struct flow_bucket flow_data;
 	struct flow_bucket *flow;
 	__u32 hash;
-
-	if (!(out_val->flags & (QOSIFY_VAL_FLAG_PRIO_CHECK |
-			        QOSIFY_VAL_FLAG_BULK_CHECK)))
-		return;
 
 	if (!config)
 		return;
@@ -345,21 +353,14 @@ check_flow(struct qosify_flow_config *config, struct __sk_buff *skb,
 			return;
 	}
 
-
-	if (out_val->flags & QOSIFY_VAL_FLAG_BULK_CHECK)
-		check_flow_bulk(config, skb, flow, out_val);
-	if (out_val->flags & QOSIFY_VAL_FLAG_PRIO_CHECK)
-		check_flow_prio(config, skb, flow, out_val);
-
-	if (flow->val.flags & out_val->flags)
-		*out_val = flow->val;
+	check_flow_bulk(config, skb, flow, out_val);
+	check_flow_prio(config, skb, flow, out_val);
 }
 
 static __always_inline struct qosify_ip_map_val *
 parse_ipv4(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
-	   bool ingress, struct qosify_dscp_val *out_val)
+	   bool ingress, __u8 *out_val)
 {
-	struct qosify_dscp_val *value;
 	struct iphdr *iph;
 	__u8 ipproto;
 	int hdr_len;
@@ -392,9 +393,8 @@ parse_ipv4(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
 
 static __always_inline struct qosify_ip_map_val *
 parse_ipv6(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
-	   bool ingress, struct qosify_dscp_val *out_val)
+	   bool ingress, __u8 *out_val)
 {
-	struct qosify_dscp_val *value;
 	struct ipv6hdr *iph;
 	__u8 ipproto;
 	void *key;
@@ -419,17 +419,39 @@ parse_ipv6(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
 	return bpf_map_lookup_elem(&ipv6_map, key);
 }
 
+static __always_inline int
+dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class)
+{
+	struct qosify_class *class;
+	__u8 fallback_flag;
+	__u32 key;
+
+	if (!(*dscp & QOSIFY_DSCP_CLASS_FLAG))
+		return 0;
+
+	fallback_flag = *dscp & QOSIFY_DSCP_FALLBACK_FLAG;
+	key = *dscp & QOSIFY_DSCP_VALUE_MASK;
+	class = bpf_map_lookup_elem(&class_map, &key);
+	if (!class)
+		return -1;
+
+	if (!(class->flags & QOSIFY_CLASS_FLAG_PRESENT))
+		return -1;
+
+	*dscp = dscp_val(&class->val, ingress);
+	*dscp |= fallback_flag;
+	*out_class = class;
+
+	return 0;
+}
+
 SEC("classifier")
 int classify(struct __sk_buff *skb)
 {
 	bool ingress = module_flags & QOSIFY_INGRESS;
 	struct qosify_config *config;
+	struct qosify_class *class = NULL;
 	struct qosify_ip_map_val *ip_val;
-	struct qosify_dscp_val val = {
-		.ingress = 0xff,
-		.egress = 0xff,
-		.flags = 0,
-	};
 	__u32 offset = 0;
 	__u32 iph_offset;
 	void *iph;
@@ -448,36 +470,36 @@ int classify(struct __sk_buff *skb)
 
 	iph_offset = offset;
 	if (type == bpf_htons(ETH_P_IP))
-		ip_val = parse_ipv4(config, skb, &offset, ingress, &val);
+		ip_val = parse_ipv4(config, skb, &offset, ingress, &dscp);
 	else if (type == bpf_htons(ETH_P_IPV6))
-		ip_val = parse_ipv6(config, skb, &offset, ingress, &val);
+		ip_val = parse_ipv6(config, skb, &offset, ingress, &dscp);
 	else
 		return TC_ACT_OK;
 
 	if (ip_val) {
 		if (!ip_val->seen)
 			ip_val->seen = 1;
-		val = ip_val->dscp;
+		dscp = ip_val->dscp;
 	}
 
-	check_flow(&config->flow, skb, &val);
-
-	dscp = dscp_val(&val, ingress);
-	if (dscp == 0xff)
+	if (dscp_lookup_class(&dscp, ingress, &class))
 		return TC_ACT_OK;
+
+	if (class) {
+		check_flow(&class->config, skb, &dscp);
+
+		if (dscp_lookup_class(&dscp, ingress, &class))
+			return TC_ACT_OK;
+	}
 
 	dscp &= GENMASK(5, 0);
 	dscp <<= 2;
 	force = !(dscp & QOSIFY_DSCP_FALLBACK_FLAG);
 
-	iph = skb_ptr(skb, iph_offset);
-	if (skb_check(skb, (void *)iph + sizeof(struct ipv6hdr)))
-		return TC_ACT_OK;
-
 	if (type == bpf_htons(ETH_P_IP))
-		ipv4_change_dsfield(iph, INET_ECN_MASK, dscp, force);
+		ipv4_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
 	else if (type == bpf_htons(ETH_P_IPV6))
-		ipv6_change_dsfield(iph, INET_ECN_MASK, dscp, force);
+		ipv6_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
 
 	return TC_ACT_OK;
 }

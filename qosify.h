@@ -29,6 +29,7 @@ enum qosify_map_id {
 	CL_MAP_UDP_PORTS,
 	CL_MAP_IPV4_ADDR,
 	CL_MAP_IPV6_ADDR,
+	CL_MAP_CLASS,
 	CL_MAP_CONFIG,
 	CL_MAP_DNS,
 	__CL_MAP_MAX,
@@ -40,8 +41,8 @@ struct qosify_map_data {
 	bool file : 1;
 	bool user : 1;
 
-	struct qosify_dscp_val dscp;
-	struct qosify_dscp_val file_dscp;
+	uint8_t dscp;
+	uint8_t file_dscp;
 
 	union {
 		uint32_t port;
@@ -66,23 +67,27 @@ struct qosify_map_entry {
 extern int qosify_map_timeout;
 extern int qosify_active_timeout;
 extern struct qosify_config config;
+extern struct qosify_flow_config flow_config;
 
 int qosify_loader_init(void);
 
 int qosify_map_init(void);
-int qosify_map_dscp_value(const char *val, struct qosify_dscp_val *dscp);
+int qosify_map_dscp_value(const char *val, uint8_t *dscp);
 int qosify_map_load_file(const char *file);
 int qosify_map_set_entry(enum qosify_map_id id, bool file, const char *str,
-			 struct qosify_dscp_val dscp);
+			 uint8_t dscp);
 void qosify_map_reload(void);
 void qosify_map_clear_files(void);
 void qosify_map_gc(void);
 void qosify_map_dump(struct blob_buf *b);
-void qosify_map_set_dscp_default(enum qosify_map_id id, struct qosify_dscp_val val);
+void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val);
 void qosify_map_reset_config(void);
 void qosify_map_update_config(void);
-void qosify_map_set_aliases(struct blob_attr *val);
+void qosify_map_set_classes(struct blob_attr *val);
 int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int ttl);
+int map_parse_flow_config(struct qosify_flow_config *cfg, struct blob_attr *attr,
+			  bool reset);
+int map_fill_dscp_value(uint8_t *dest, struct blob_attr *attr, bool reset);
 
 int qosify_iface_init(void);
 void qosify_iface_config_update(struct blob_attr *ifaces, struct blob_attr *devs);
