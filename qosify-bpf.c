@@ -327,11 +327,18 @@ static __always_inline void
 check_flow_prio(struct qosify_flow_config *config, struct __sk_buff *skb,
 		struct flow_bucket *flow, __u8 *out_val)
 {
+	int cur_len = skb->len;
+
 	if (flow->bulk_timeout)
 		return;
 
-	if (config->prio_max_avg_pkt_len &&
-	    ewma(&flow->pkt_len_avg, skb->len) <= config->prio_max_avg_pkt_len)
+	if (!config->prio_max_avg_pkt_len)
+		return;
+
+	if (skb->gso_size && skb->gso_segs > 1)
+		cur_len /= skb->gso_segs;
+
+	if (ewma(&flow->pkt_len_avg, cur_len) <= config->prio_max_avg_pkt_len)
 		*out_val = config->dscp_prio;
 }
 
