@@ -296,7 +296,7 @@ check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
 	if ((u32)delta > FLOW_TIMEOUT)
 		goto reset;
 
-	if (skb->gso_size && skb->gso_segs)
+	if (skb->gso_segs)
 		segs = skb->gso_segs;
 	flow->pkt_count += segs;
 	if (flow->pkt_count > config->bulk_trigger_pps) {
@@ -335,7 +335,7 @@ check_flow_prio(struct qosify_flow_config *config, struct __sk_buff *skb,
 	if (!config->prio_max_avg_pkt_len)
 		return;
 
-	if (skb->gso_size && skb->gso_segs > 1)
+	if (skb->gso_segs > 1)
 		cur_len /= skb->gso_segs;
 
 	if (ewma(&flow->pkt_len_avg, cur_len) <= config->prio_max_avg_pkt_len)
