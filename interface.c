@@ -518,27 +518,34 @@ void qosify_iface_check(void)
 	uloop_timeout_set(&timer, 10);
 }
 
+static void
+__qosify_iface_status(struct blob_buf *b, struct qosify_iface *iface)
+{
+	void *c;
+
+	c = blobmsg_open_table(b, qosify_iface_name(iface));
+	blobmsg_add_u8(b, "active", iface->active);
+	if (iface->ifname)
+		blobmsg_add_string(b, "ifname", iface->ifname);
+	blobmsg_add_u8(b, "egress", iface->config.egress);
+	blobmsg_add_u8(b, "ingress", iface->config.ingress);
+	blobmsg_close_table(b, c);
+
+}
+
 void qosify_iface_status(struct blob_buf *b)
 {
 	struct qosify_iface *iface;
-	void *c, *i;
+	void *c;
 
 	c = blobmsg_open_table(b, "devices");
-	vlist_for_each_element(&devices, iface, node) {
-		i = blobmsg_open_table(b, qosify_iface_name(iface));
-		blobmsg_add_u8(b, "active", iface->active);
-		blobmsg_close_table(b, i);
-	}
+	vlist_for_each_element(&devices, iface, node)
+		__qosify_iface_status(b, iface);
 	blobmsg_close_table(b, c);
 
 	c = blobmsg_open_table(b, "interfaces");
-	vlist_for_each_element(&interfaces, iface, node) {
-		i = blobmsg_open_table(b, qosify_iface_name(iface));
-		blobmsg_add_u8(b, "active", iface->active);
-		if (iface->ifname)
-			blobmsg_add_string(b, "ifname", iface->ifname);
-		blobmsg_close_table(b, i);
-	}
+	vlist_for_each_element(&interfaces, iface, node)
+		__qosify_iface_status(b, iface);
 	blobmsg_close_table(b, c);
 }
 
