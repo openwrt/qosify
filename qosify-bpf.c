@@ -258,10 +258,12 @@ parse_l4proto(struct qosify_config *config, struct __sk_buff *skb,
 		return;
 	}
 
+	src = READ_ONCE(udp->source);
+	dest = READ_ONCE(udp->dest);
 	if (ingress)
-		key = udp->source;
+		key = src;
 	else
-		key = udp->dest;
+		key = dest;
 
 	if (proto == IPPROTO_TCP) {
 		value = bpf_map_lookup_elem(&tcp_ports, &key);
