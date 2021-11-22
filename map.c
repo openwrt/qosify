@@ -158,29 +158,22 @@ static void __qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val)
 	int fd;
 	int i;
 
-	if (id == CL_MAP_TCP_PORTS)
-		key = QOSIFY_MAX_CLASS_ENTRIES;
-	else if (id == CL_MAP_UDP_PORTS)
-		key = QOSIFY_MAX_CLASS_ENTRIES + 1;
-	else
-		return;
-
-	fd = qosify_map_fds[CL_MAP_CLASS];
-	if (val & QOSIFY_DSCP_CLASS_FLAG) {
-		uint8_t fallback = val & QOSIFY_DSCP_FALLBACK_FLAG;
-
-		val &= QOSIFY_DSCP_VALUE_MASK;
-		if (val > ARRAY_SIZE(map_class) || !map_class[val])
+	if (!(val & QOSIFY_DSCP_CLASS_FLAG)) {
+		if (id == CL_MAP_TCP_PORTS)
+			key = QOSIFY_MAX_CLASS_ENTRIES;
+		else if (id == CL_MAP_UDP_PORTS)
+			key = QOSIFY_MAX_CLASS_ENTRIES + 1;
+		else
 			return;
 
-		class.val.ingress = map_class[val]->data.val.ingress | fallback;
-		class.val.egress = map_class[val]->data.val.egress | fallback;
+		fd = qosify_map_fds[CL_MAP_CLASS];
+
+		memcpy(&class.config, &flow_config, sizeof(class.config));
+		bpf_map_update_elem(fd, &key, &class, BPF_ANY);
+
+		val = key | QOSIFY_DSCP_CLASS_FLAG;
 	}
 
-	memcpy(&class.config, &flow_config, sizeof(class.config));
-	bpf_map_update_elem(fd, &key, &class, BPF_ANY);
-
-	val = key | QOSIFY_DSCP_CLASS_FLAG;
 	fd = qosify_map_fds[id];
 	for (i = 0; i < (1 << 16); i++) {
 		data.addr.port = htons(i);
