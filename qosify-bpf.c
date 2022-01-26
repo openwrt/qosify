@@ -44,13 +44,21 @@ struct {
 	__uint(max_entries, 1);
 } config SEC(".maps");
 
-typedef struct {
+struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(pinning, 1);
 	__type(key, __u32);
 	__type(value, __u8);
 	__uint(max_entries, 1 << 16);
-} port_array_t;
+} tcp_ports SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(pinning, 1);
+	__type(key, __u32);
+	__type(value, __u8);
+	__uint(max_entries, 1 << 16);
+} udp_ports SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -59,9 +67,6 @@ struct {
 	__type(value, struct flow_bucket);
 	__uint(max_entries, QOSIFY_FLOW_BUCKETS);
 } flow_map SEC(".maps");
-
-port_array_t tcp_ports SEC(".maps");
-port_array_t udp_ports SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
