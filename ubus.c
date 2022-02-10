@@ -419,6 +419,7 @@ int qosify_ubus_check_interface(const char *name, char *ifname, int ifname_len)
 	if (ubus_lookup_id(&conn.ctx, obj_name, &id))
 		return -1;
 
+	blob_buf_init(&b, 0);
 	ubus_invoke(&conn.ctx, id, "status", b.head, netifd_if_cb, &req, 1000);
 
 	if (!ifname[0])
