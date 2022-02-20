@@ -286,6 +286,8 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 		APPEND(buf, ofs, " bandwidth %s", bw);
 
 	APPEND(buf, ofs, " %s %sgress", cfg->mode, egress ? "e" : "in");
+	if (!egress && cfg->autorate_ingress)
+		APPEND(buf, ofs, " autorate-ingress");
 
 	if (cfg->host_isolate)
 		APPEND(buf, ofs, " %snat dual-%shost",
