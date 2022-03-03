@@ -4,7 +4,6 @@
  */
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <net/if_arp.h>
 #include <net/if.h>
@@ -195,64 +194,6 @@ interface_ifb_name(struct qosify_iface *iface)
 	return ifname;
 }
 
-static int run_cmd(char *cmd, bool ignore)
-{
-	char *argv[] = { "sh", "-c", cmd, NULL };
-	bool first = true;
-	int status = -1;
-	char buf[512];
-	int fds[2];
-	FILE *f;
-	int pid;
-
-	if (pipe(fds))
-		return -1;
-
-	pid = fork();
-	if (!pid) {
-		close(fds[0]);
-		if (fds[1] != STDOUT_FILENO)
-			dup2(fds[1], STDOUT_FILENO);
-		if (fds[1] != STDERR_FILENO)
-			dup2(fds[1], STDERR_FILENO);
-		if (fds[1] > STDERR_FILENO)
-			close(fds[1]);
-		execv("/bin/sh", argv);
-		exit(1);
-	}
-
-	if (pid < 0)
-		return -1;
-
-	close(fds[1]);
-	f = fdopen(fds[0], "r");
-	if (!f) {
-		close(fds[0]);
-		goto out;
-	}
-
-	while (fgets(buf, sizeof(buf), f) != NULL) {
-		if (!strlen(buf))
-			break;
-		if (ignore)
-			continue;
-		if (first) {
-			ULOG_WARN("Command: %s\n", cmd);
-			first = false;
-		}
-		ULOG_WARN("%s%s", buf, strchr(buf, '\n') ? "" : "\n");
-	}
-
-	fclose(f);
-
-out:
-	while (waitpid(pid, &status, 0) < 0)
-		if (errno != EINTR)
-			break;
-
-	return status;
-}
-
 static int
 prepare_tc_cmd(char *buf, int len, const char *type, const char *cmd,
 	       const char *dev, const char *extra)
@@ -267,7 +208,7 @@ cmd_del_qdisc(const char *ifname, const char *type)
 
 	prepare_tc_cmd(buf, sizeof(buf), "qdisc", "del", ifname, type);
 
-	return run_cmd(buf, true);
+	return qosify_run_cmd(buf, true);
 }
 
 static int
@@ -300,14 +241,14 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 	       cfg->common_opts ? cfg->common_opts : "",
 	       dir_opts ? dir_opts : "");
 
-	run_cmd(buf, false);
+	qosify_run_cmd(buf, false);
 
 	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", ifname, "parent 1: bpf");
 	APPEND(buf, ofs, " object-pinned /sys/fs/bpf/qosify_%sgress_%s verbose direct-action",
 	       egress ? "e" : "in",
 		   eth ? "eth" : "ip");
 
-	return run_cmd(buf, false);
+	return qosify_run_cmd(buf, false);
 }
 
 static int
@@ -318,7 +259,7 @@ cmd_del_ingress(struct qosify_iface *iface)
 	cmd_del_qdisc(iface->ifname, "handle ffff: ingress");
 	snprintf(buf, sizeof(buf), "ip link del '%s'", interface_ifb_name(iface));
 
-	return run_cmd(buf, true);
+	return qosify_run_cmd(buf, true);
 }
 
 
@@ -332,20 +273,20 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 	cmd_del_ingress(iface);
 
 	ofs = prepare_tc_cmd(buf, sizeof(buf), "qdisc", "add", iface->ifname, " handle ffff: ingress");
-	run_cmd(buf, false);
+	qosify_run_cmd(buf, false);
 
 	snprintf(buf, sizeof(buf), "ip link add '%s' type ifb", ifbdev);
-	run_cmd(buf, false);
+	qosify_run_cmd(buf, false);
 
 	cmd_add_qdisc(iface, ifbdev, false, eth);
 
 	snprintf(buf, sizeof(buf), "ip link set dev '%s' up", ifbdev);
-	run_cmd(buf, false);
+	qosify_run_cmd(buf, false);
 
 	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
 	APPEND(buf, ofs, " protocol all prio 10 u32 match u32 0 0 "
 			 "flowid 1:1 action mirred egress redirect dev '%s'", ifbdev);
-	return run_cmd(buf, false);
+	return qosify_run_cmd(buf, false);
 }
 
 static void

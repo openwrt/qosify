@@ -69,6 +69,8 @@ extern int qosify_active_timeout;
 extern struct qosify_config config;
 extern struct qosify_flow_config flow_config;
 
+int qosify_run_cmd(char *cmd, bool ignore_error);
+
 int qosify_loader_init(void);
 
 int qosify_map_init(void);
