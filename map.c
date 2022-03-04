@@ -284,7 +284,7 @@ __qosify_map_alloc_entry(struct qosify_map_data *data)
 	return e;
 }
 
-static void __qosify_map_set_entry(struct qosify_map_data *data)
+void __qosify_map_set_entry(struct qosify_map_data *data)
 {
 	int fd = qosify_map_fds[data->id];
 	struct qosify_map_entry *e;

@@ -121,6 +121,8 @@ int main(int argc, char **argv)
 	    qosify_iface_init())
 		return 2;
 
+	qosify_dns_init();
+
 	uloop_run();
 
 	qosify_ubus_stop();

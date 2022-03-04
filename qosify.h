@@ -24,6 +24,8 @@
 #define CLASSIFY_PIN_PATH	"/sys/fs/bpf/qosify"
 #define CLASSIFY_DATA_PATH	"/sys/fs/bpf/qosify_data"
 
+#define QOSIFY_DNS_IFNAME "ifb-dns"
+
 enum qosify_map_id {
 	CL_MAP_TCP_PORTS,
 	CL_MAP_UDP_PORTS,
@@ -76,6 +78,7 @@ int qosify_loader_init(void);
 int qosify_map_init(void);
 int qosify_map_dscp_value(const char *val, uint8_t *dscp);
 int qosify_map_load_file(const char *file);
+void __qosify_map_set_entry(struct qosify_map_data *data);
 int qosify_map_set_entry(enum qosify_map_id id, bool file, const char *str,
 			 uint8_t dscp);
 void qosify_map_reload(void);
@@ -97,6 +100,9 @@ void qosify_iface_config_update(struct blob_attr *ifaces, struct blob_attr *devs
 void qosify_iface_check(void);
 void qosify_iface_status(struct blob_buf *b);
 void qosify_iface_stop(void);
+
+int qosify_dns_init(void);
+void qosify_dns_stop(void);
 
 int qosify_ubus_init(void);
 void qosify_ubus_stop(void);

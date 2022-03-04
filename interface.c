@@ -275,6 +275,19 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 	ofs = prepare_tc_cmd(buf, sizeof(buf), "qdisc", "add", iface->ifname, " handle ffff: ingress");
 	qosify_run_cmd(buf, false);
 
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	APPEND(buf, ofs, " protocol ip prio 5 u32 match ip sport 53 0xffff "
+			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
+	qosify_run_cmd(buf, false);
+
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	APPEND(buf, ofs, " protocol ipv6 prio 6 u32 match ip6 sport 53 0xffff "
+			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
+	qosify_run_cmd(buf, false);
+
+	if (!iface->config.ingress)
+		return 0;
+
 	snprintf(buf, sizeof(buf), "ip link add '%s' type ifb", ifbdev);
 	qosify_run_cmd(buf, false);
 
@@ -310,8 +323,7 @@ interface_start(struct qosify_iface *iface)
 
 	if (iface->config.egress)
 		cmd_add_qdisc(iface, iface->ifname, true, eth);
-	if (iface->config.ingress)
-		cmd_add_ingress(iface, eth);
+	cmd_add_ingress(iface, eth);
 
 	iface->active = true;
 }

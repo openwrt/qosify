@@ -7,7 +7,7 @@ ADD_DEFINITIONS(-Os -Wall -Wno-unknown-warning-option -Wno-array-bounds -Wno-for
 SET(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 
 find_library(bpf NAMES bpf)
-ADD_EXECUTABLE(qosify main.c loader.c map.c ubus.c interface.c)
+ADD_EXECUTABLE(qosify main.c loader.c map.c ubus.c interface.c dns.c)
 TARGET_LINK_LIBRARIES(qosify ${bpf} ubox ubus)
 
 INSTALL(TARGETS qosify
