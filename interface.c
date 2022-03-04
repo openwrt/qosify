@@ -149,7 +149,7 @@ iface_config_set(struct qosify_iface *iface, struct blob_attr *attr)
 	cfg->ingress = true;
 	cfg->egress = true;
 	cfg->host_isolate = true;
-	cfg->autorate_ingress = true;
+	cfg->autorate_ingress = false;
 	cfg->nat = !iface->device;
 
 	if ((cur = tb[IFACE_ATTR_BW_UP]) != NULL)
