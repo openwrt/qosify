@@ -74,6 +74,7 @@ struct dns_answer {
 
 struct cname_entry {
 	struct avl_node node;
+	uint32_t seq;
 	uint8_t dscp;
 	uint8_t age;
 };
@@ -123,7 +124,7 @@ proto_is_vlan(uint16_t proto)
 }
 
 static void
-cname_cache_set(const char *name, uint8_t dscp)
+cname_cache_set(const char *name, uint8_t dscp, uint32_t seq)
 {
 	struct cname_entry *e;
 
@@ -138,10 +139,11 @@ cname_cache_set(const char *name, uint8_t dscp)
 
 	e->age = 0;
 	e->dscp = dscp;
+	e->seq = seq;
 }
 
 static int
-cname_cache_get(const char *name, uint8_t *dscp)
+cname_cache_get(const char *name, uint8_t *dscp, uint32_t *seq)
 {
 	struct cname_entry *e;
 
@@ -149,12 +151,16 @@ cname_cache_get(const char *name, uint8_t *dscp)
 	if (!e)
 		return -1;
 
-	*dscp = e->dscp;
+	if (*dscp == 0xff || e->seq < *seq) {
+		*dscp = e->dscp;
+		*seq = e->seq;
+	}
+
 	return 0;
 }
 
 static int
-dns_parse_question(struct packet *pkt, const void *hdr, uint8_t *dscp)
+dns_parse_question(struct packet *pkt, const void *hdr, uint8_t *dscp, uint32_t *seq)
 {
 	char qname[MAX_NAME_LEN];
 
@@ -162,14 +168,14 @@ dns_parse_question(struct packet *pkt, const void *hdr, uint8_t *dscp)
 	    !pkt_pull(pkt, sizeof(struct dns_question)))
 		return -1;
 
-	cname_cache_get(qname, dscp);
-	qosify_map_lookup_dns_entry(qname, dscp);
+	cname_cache_get(qname, dscp, seq);
+	qosify_map_lookup_dns_entry(qname, dscp, seq);
 
 	return 0;
 }
 
 static int
-dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp)
+dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp, uint32_t *seq)
 {
 	struct qosify_map_data data = {};
 	char cname[MAX_NAME_LEN];
@@ -196,8 +202,8 @@ dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp)
 			      cname, sizeof(cname)) < 0)
 			return -1;
 
-		qosify_map_lookup_dns_entry(cname, dscp);
-		cname_cache_set(cname, *dscp);
+		qosify_map_lookup_dns_entry(cname, dscp, seq);
+		cname_cache_set(cname, *dscp, *seq);
 
 		return 0;
 	case TYPE_A:
@@ -227,6 +233,7 @@ static void
 qosify_dns_data_cb(struct packet *pkt)
 {
 	struct dns_header *h;
+	uint32_t lookup_seq = 0;
 	uint8_t dscp = 0xff;
 	int i;
 
@@ -241,11 +248,11 @@ qosify_dns_data_cb(struct packet *pkt)
 	if (h->questions != cpu_to_be16(1))
 		return;
 
-	if (dns_parse_question(pkt, h, &dscp))
+	if (dns_parse_question(pkt, h, &dscp, &lookup_seq))
 		return;
 
 	for (i = 0; i < be16_to_cpu(h->answers); i++)
-		if (dns_parse_answer(pkt, h, &dscp))
+		if (dns_parse_answer(pkt, h, &dscp, &lookup_seq))
 			return;
 }
 

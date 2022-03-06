@@ -31,6 +31,7 @@ int qosify_map_timeout;
 int qosify_active_timeout;
 struct qosify_config config;
 struct qosify_flow_config flow_config;
+static uint32_t map_dns_seq;
 
 struct qosify_map_file {
 	struct list_head list;
@@ -332,6 +333,9 @@ void __qosify_map_set_entry(struct qosify_map_data *data)
 		bpf_map_update_elem(fd, &data->addr, &val, BPF_ANY);
 	}
 
+	if (data->id == CL_MAP_DNS)
+		e->data.addr.dns.seq = ++map_dns_seq;
+
 	if (add) {
 		if (qosify_map_timeout == ~0 || file) {
 			e->timeout = ~0;
@@ -599,6 +603,7 @@ static void qosify_map_reset_file_entries(void)
 {
 	struct qosify_map_entry *e;
 
+	map_dns_seq = 0;
 	avl_for_each_element(&map_data, e, avl)
 		e->data.file = false;
 }
@@ -710,7 +715,7 @@ void qosify_map_gc(void)
 	uloop_timeout_set(&qosify_map_timer, timeout * 1000);
 }
 
-int qosify_map_lookup_dns_entry(char *host, uint8_t *dscp)
+int qosify_map_lookup_dns_entry(char *host, uint8_t *dscp, uint32_t *seq)
 {
 	struct qosify_map_data data = {
 		.id = CL_MAP_DNS,
@@ -741,7 +746,10 @@ int qosify_map_lookup_dns_entry(char *host, uint8_t *dscp)
 				continue;
 		}
 
-		*dscp = e->data.dscp;
+		if (*dscp == 0xff || e->data.addr.dns.seq < *seq) {
+			*dscp = e->data.dscp;
+			*seq = e->data.addr.dns.seq;
+		}
 		ret = 0;
 	}
 
@@ -753,8 +761,9 @@ int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int 
 {
 	struct qosify_map_data data = {};
 	int prev_timeout = qosify_map_timeout;
+	uint32_t lookup_seq = 0;
 
-	if (qosify_map_lookup_dns_entry(host, &data.dscp))
+	if (qosify_map_lookup_dns_entry(host, &data.dscp, &lookup_seq))
 		return 0;
 
 	data.user = true;

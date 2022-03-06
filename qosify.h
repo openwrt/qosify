@@ -51,6 +51,7 @@ struct qosify_map_data {
 		struct in_addr ip;
 		struct in6_addr ip6;
 		struct {
+			uint32_t seq;
 			const char *pattern;
 			regex_t regex;
 		} dns;
@@ -89,7 +90,7 @@ void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val);
 void qosify_map_reset_config(void);
 void qosify_map_update_config(void);
 void qosify_map_set_classes(struct blob_attr *val);
-int qosify_map_lookup_dns_entry(char *host, uint8_t *dscp);
+int qosify_map_lookup_dns_entry(char *host, uint8_t *dscp, uint32_t *seq);
 int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int ttl);
 int map_parse_flow_config(struct qosify_flow_config *cfg, struct blob_attr *attr,
 			  bool reset);
