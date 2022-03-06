@@ -406,6 +406,8 @@ int qosify_map_set_entry(enum qosify_map_id id, bool file, const char *str,
 	switch (id) {
 	case CL_MAP_DNS:
 		data.addr.dns.pattern = str;
+		if (str[-2] == 'c')
+			data.addr.dns.only_cname = 1;
 		break;
 	case CL_MAP_TCP_PORTS:
 	case CL_MAP_UDP_PORTS:
@@ -525,6 +527,8 @@ qosify_map_parse_line(char *str)
 
 	if (!strncmp(key, "dns:", 4))
 		qosify_map_set_entry(CL_MAP_DNS, true, key + 4, dscp);
+	if (!strncmp(key, "dns_q:", 6) || !strncmp(key, "dns_c:", 6))
+		qosify_map_set_entry(CL_MAP_DNS, true, key + 6, dscp);
 	if (!strncmp(key, "tcp:", 4))
 		qosify_map_set_entry(CL_MAP_TCP_PORTS, true, key + 4, dscp);
 	else if (!strncmp(key, "udp:", 4))
@@ -715,7 +719,7 @@ void qosify_map_gc(void)
 	uloop_timeout_set(&qosify_map_timer, timeout * 1000);
 }
 
-int qosify_map_lookup_dns_entry(char *host, uint8_t *dscp, uint32_t *seq)
+int qosify_map_lookup_dns_entry(char *host, bool cname, uint8_t *dscp, uint32_t *seq)
 {
 	struct qosify_map_data data = {
 		.id = CL_MAP_DNS,
@@ -737,6 +741,9 @@ int qosify_map_lookup_dns_entry(char *host, uint8_t *dscp, uint32_t *seq)
 
 		if (e->data.id != CL_MAP_DNS)
 			break;
+
+		if (!cname && e->data.addr.dns.only_cname)
+			continue;
 
 		if (e->data.addr.dns.pattern[0] == '/') {
 			if (regexec(regex, host, 0, NULL, 0) != 0)
@@ -763,7 +770,7 @@ int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int 
 	int prev_timeout = qosify_map_timeout;
 	uint32_t lookup_seq = 0;
 
-	if (qosify_map_lookup_dns_entry(host, &data.dscp, &lookup_seq))
+	if (qosify_map_lookup_dns_entry(host, false, &data.dscp, &lookup_seq))
 		return 0;
 
 	data.user = true;

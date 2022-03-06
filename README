@@ -104,9 +104,13 @@ match is one of:
 - dns:/<regex>
 	POSIX.2 extended regular expression for matching hostnames
 	Only works, if dns lookups are passed to qosify via the add_dns_host ubus call.
+- dns_c:...
+	Like dns:... but only matches cname entries
 
 dscp can be a raw value, or a codepoint like CS0
 Adding a + in front of the value tells qosify to only override the DSCP value if it is zero
+DNS entries are compared in the order in which they are specified in the config, using the
+first matching entry.
 
 
 Planned features:

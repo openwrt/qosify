@@ -169,7 +169,7 @@ dns_parse_question(struct packet *pkt, const void *hdr, uint8_t *dscp, uint32_t 
 		return -1;
 
 	cname_cache_get(qname, dscp, seq);
-	qosify_map_lookup_dns_entry(qname, dscp, seq);
+	qosify_map_lookup_dns_entry(qname, false, dscp, seq);
 
 	return 0;
 }
@@ -202,7 +202,7 @@ dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp, uint32_t *seq)
 			      cname, sizeof(cname)) < 0)
 			return -1;
 
-		qosify_map_lookup_dns_entry(cname, dscp, seq);
+		qosify_map_lookup_dns_entry(cname, true, dscp, seq);
 		cname_cache_set(cname, *dscp, *seq);
 
 		return 0;
