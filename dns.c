@@ -276,7 +276,7 @@ qosify_dns_packet_cb(struct packet *pkt)
 		if (!vlan)
 			return;
 
-		proto = vlan->proto;
+		proto = be16_to_cpu(vlan->proto);
 	}
 
 	switch (proto) {
