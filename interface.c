@@ -217,6 +217,19 @@ cmd_del_qdisc(const char *ifname, const char *type)
 	return __cmd_add_del_qdisc(ifname, type, false);
 }
 
+static int
+cmd_add_bpf_filter(const char *ifname, bool egress, bool eth)
+{
+	char buf[512];
+	int ofs;
+
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", ifname, egress ? "egress" : "ingress");
+	APPEND(buf, ofs, " prio 10 bpf object-pinned /sys/fs/bpf/qosify_%sgress_%s verbose direct-action",
+	       egress ? "e" : "in",
+		   eth ? "eth" : "ip");
+
+	return qosify_run_cmd(buf, false);
+}
 
 static int
 cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool eth)
@@ -247,13 +260,6 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 	APPEND(buf, ofs, " %s %s",
 	       cfg->common_opts ? cfg->common_opts : "",
 	       dir_opts ? dir_opts : "");
-
-	qosify_run_cmd(buf, false);
-
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", ifname, "egress bpf");
-	APPEND(buf, ofs, " object-pinned /sys/fs/bpf/qosify_%sgress_%s verbose direct-action",
-	       egress ? "e" : "in",
-		   eth ? "eth" : "ip");
 
 	return qosify_run_cmd(buf, false);
 }
@@ -300,6 +306,8 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
 	qosify_run_cmd(buf, false);
 
+	cmd_add_bpf_filter(iface->ifname, false, eth);
+
 	if (!iface->config.ingress)
 		return 0;
 
@@ -312,9 +320,19 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 	qosify_run_cmd(buf, false);
 
 	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
-	APPEND(buf, ofs, " protocol all prio 10 u32 match u32 0 0 "
+	APPEND(buf, ofs, " protocol all prio 20 u32 match u32 0 0 "
 			 "flowid 1:1 action mirred egress redirect dev '%s'", ifbdev);
 	return qosify_run_cmd(buf, false);
+}
+
+static int cmd_add_egress(struct qosify_iface *iface, bool eth)
+{
+	if (!iface->config.egress)
+		return 0;
+
+	cmd_add_qdisc(iface, iface->ifname, true, eth);
+
+	return cmd_add_bpf_filter(iface->ifname, true, eth);
 }
 
 static void
@@ -345,8 +363,7 @@ interface_start(struct qosify_iface *iface)
 	eth = ifr.ifr_hwaddr.sa_family == ARPHRD_ETHER;
 
 	interface_clear_qdisc(iface);
-	if (iface->config.egress)
-		cmd_add_qdisc(iface, iface->ifname, true, eth);
+	cmd_add_egress(iface, eth);
 	cmd_add_ingress(iface, eth);
 
 	iface->active = true;
