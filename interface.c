@@ -202,14 +202,21 @@ prepare_tc_cmd(char *buf, int len, const char *type, const char *cmd,
 }
 
 static int
-cmd_del_qdisc(const char *ifname, const char *type)
+__cmd_add_del_qdisc(const char *ifname, const char *type, bool add)
 {
 	char buf[64];
 
-	prepare_tc_cmd(buf, sizeof(buf), "qdisc", "del", ifname, type);
+	prepare_tc_cmd(buf, sizeof(buf), "qdisc", add ? "add" : "del", ifname, type);
 
 	return qosify_run_cmd(buf, true);
 }
+
+static int
+cmd_del_qdisc(const char *ifname, const char *type)
+{
+	return __cmd_add_del_qdisc(ifname, type, false);
+}
+
 
 static int
 cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool eth)
@@ -220,9 +227,9 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 	char buf[512];
 	int ofs;
 
-	cmd_del_qdisc(ifname, "root");
+	__cmd_add_del_qdisc(ifname, "clsact", true);
 
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "qdisc", "add", ifname, "root handle 1: cake");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "qdisc", "add", ifname, "root cake");
 	if (bw)
 		APPEND(buf, ofs, " bandwidth %s", bw);
 
@@ -243,7 +250,7 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 
 	qosify_run_cmd(buf, false);
 
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", ifname, "parent 1: bpf");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", ifname, "egress bpf");
 	APPEND(buf, ofs, " object-pinned /sys/fs/bpf/qosify_%sgress_%s verbose direct-action",
 	       egress ? "e" : "in",
 		   eth ? "eth" : "ip");
@@ -256,12 +263,10 @@ cmd_del_ingress(struct qosify_iface *iface)
 {
 	char buf[256];
 
-	cmd_del_qdisc(iface->ifname, "handle ffff: ingress");
 	snprintf(buf, sizeof(buf), "ip link del '%s'", interface_ifb_name(iface));
 
 	return qosify_run_cmd(buf, true);
 }
-
 
 static int
 cmd_add_ingress(struct qosify_iface *iface, bool eth)
@@ -270,32 +275,27 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 	char buf[256];
 	int ofs;
 
-	cmd_del_ingress(iface);
-
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "qdisc", "add", iface->ifname, " handle ffff: ingress");
-	qosify_run_cmd(buf, false);
-
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
 	APPEND(buf, ofs, " protocol ip prio 5 u32 match ip sport 53 0xffff "
 			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
 	qosify_run_cmd(buf, false);
 
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
 	APPEND(buf, ofs, " protocol ip prio 5 u32 match ip sport 53 0xffff "
 			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
 	qosify_run_cmd(buf, false);
 
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
 	APPEND(buf, ofs, " protocol 802.1Q prio 6 u32 offset plus 4 match ip sport 53 0xffff "
 			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
 	qosify_run_cmd(buf, false);
 
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
 	APPEND(buf, ofs, " protocol ipv6 prio 7 u32 match ip6 sport 53 0xffff "
 			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
 	qosify_run_cmd(buf, false);
 
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
 	APPEND(buf, ofs, " protocol ipv6 prio 8 u32 offset plus 4 match ip6 sport 53 0xffff "
 			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
 	qosify_run_cmd(buf, false);
@@ -311,10 +311,18 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 	snprintf(buf, sizeof(buf), "ip link set dev '%s' up", ifbdev);
 	qosify_run_cmd(buf, false);
 
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " parent ffff:");
+	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
 	APPEND(buf, ofs, " protocol all prio 10 u32 match u32 0 0 "
 			 "flowid 1:1 action mirred egress redirect dev '%s'", ifbdev);
 	return qosify_run_cmd(buf, false);
+}
+
+static void
+interface_clear_qdisc(struct qosify_iface *iface)
+{
+	cmd_del_qdisc(iface->ifname, "root");
+	cmd_del_qdisc(iface->ifname, "clsact");
+	cmd_del_ingress(iface);
 }
 
 static void
@@ -336,6 +344,7 @@ interface_start(struct qosify_iface *iface)
 
 	eth = ifr.ifr_hwaddr.sa_family == ARPHRD_ETHER;
 
+	interface_clear_qdisc(iface);
 	if (iface->config.egress)
 		cmd_add_qdisc(iface, iface->ifname, true, eth);
 	cmd_add_ingress(iface, eth);
@@ -352,10 +361,7 @@ interface_stop(struct qosify_iface *iface)
 	ULOG_INFO("stop interface %s\n", iface->ifname);
 	iface->active = false;
 
-	if (iface->config.egress)
-		cmd_del_qdisc(iface->ifname, "root");
-	if (iface->config.ingress)
-		cmd_del_ingress(iface);
+	interface_clear_qdisc(iface);
 }
 
 static void
