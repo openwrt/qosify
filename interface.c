@@ -287,11 +287,6 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 	qosify_run_cmd(buf, false);
 
 	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
-	APPEND(buf, ofs, " protocol ip prio 5 u32 match ip sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
-	qosify_run_cmd(buf, false);
-
-	ofs = prepare_tc_cmd(buf, sizeof(buf), "filter", "add", iface->ifname, " ingress");
 	APPEND(buf, ofs, " protocol 802.1Q prio 6 u32 offset plus 4 match ip sport 53 0xffff "
 			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
 	qosify_run_cmd(buf, false);
