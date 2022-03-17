@@ -478,7 +478,7 @@ int classify(struct __sk_buff *skb)
 
 	config = get_config();
 	if (!config)
-		return TC_ACT_OK;
+		return TC_ACT_UNSPEC;
 
 	if (module_flags & QOSIFY_IP_ONLY)
 		type = skb->protocol;
@@ -491,7 +491,7 @@ int classify(struct __sk_buff *skb)
 	else if (type == bpf_htons(ETH_P_IPV6))
 		ip_val = parse_ipv6(config, skb, &offset, ingress, &dscp);
 	else
-		return TC_ACT_OK;
+		return TC_ACT_UNSPEC;
 
 	if (ip_val) {
 		if (!ip_val->seen)
@@ -500,13 +500,13 @@ int classify(struct __sk_buff *skb)
 	}
 
 	if (dscp_lookup_class(&dscp, ingress, &class))
-		return TC_ACT_OK;
+		return TC_ACT_UNSPEC;
 
 	if (class) {
 		check_flow(&class->config, skb, &dscp);
 
 		if (dscp_lookup_class(&dscp, ingress, &class))
-			return TC_ACT_OK;
+			return TC_ACT_UNSPEC;
 	}
 
 	dscp &= GENMASK(5, 0);
@@ -518,7 +518,7 @@ int classify(struct __sk_buff *skb)
 	else if (type == bpf_htons(ETH_P_IPV6))
 		ipv6_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
 
-	return TC_ACT_OK;
+	return TC_ACT_UNSPEC;
 }
 
 char _license[] SEC("license") = "GPL";
