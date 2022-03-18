@@ -268,22 +268,22 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 
 	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
 	APPEND(buf, ofs, " protocol ip u32 match ip sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
+			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
 	qosify_run_cmd(buf, false);
 
 	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
 	APPEND(buf, ofs, " protocol 802.1Q u32 offset plus 4 match ip sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
+			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
 	qosify_run_cmd(buf, false);
 
 	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
 	APPEND(buf, ofs, " protocol ipv6 u32 match ip6 sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
+			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
 	qosify_run_cmd(buf, false);
 
 	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
 	APPEND(buf, ofs, " protocol ipv6 u32 offset plus 4 match ip6 sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev ifb-dns");
+			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
 	qosify_run_cmd(buf, false);
 
 
