@@ -462,7 +462,7 @@ dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class)
 	return 0;
 }
 
-SEC("classifier")
+SEC("tc")
 int classify(struct __sk_buff *skb)
 {
 	bool ingress = module_flags & QOSIFY_INGRESS;

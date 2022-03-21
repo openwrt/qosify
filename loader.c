@@ -30,7 +30,7 @@ static void qosify_fill_rodata(struct bpf_object *obj, uint32_t flags)
 {
 	struct bpf_map *map = NULL;
 
-	while ((map = bpf_map__next(map, obj)) != NULL) {
+	while ((map = bpf_object__next_map(obj, map)) != NULL) {
 		if (!strstr(bpf_map__name(map), ".rodata"))
 			continue;
 
@@ -58,7 +58,7 @@ qosify_create_program(const char *suffix, uint32_t flags)
 		return -1;
 	}
 
-	prog = bpf_object__find_program_by_title(obj, "classifier");
+	prog = bpf_object__find_program_by_name(obj, "classify");
 	if (!prog) {
 		fprintf(stderr, "Can't find classifier prog\n");
 		return -1;
