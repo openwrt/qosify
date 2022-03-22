@@ -766,7 +766,9 @@ int qosify_map_lookup_dns_entry(char *host, bool cname, uint8_t *dscp, uint32_t 
 
 int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int ttl)
 {
-	struct qosify_map_data data = {};
+	struct qosify_map_data data = {
+		.dscp = 0xff
+	};
 	int prev_timeout = qosify_map_timeout;
 	uint32_t lookup_seq = 0;
 
