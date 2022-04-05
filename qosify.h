@@ -78,6 +78,7 @@ extern struct qosify_flow_config flow_config;
 int qosify_run_cmd(char *cmd, bool ignore_error);
 
 int qosify_loader_init(void);
+const char *qosify_get_program(uint32_t flags, int *fd);
 
 int qosify_map_init(void);
 int qosify_map_dscp_value(const char *val, uint8_t *dscp);

@@ -10,6 +10,17 @@
 
 #include "qosify.h"
 
+static struct {
+	const char *suffix;
+	uint32_t flags;
+	int fd;
+} bpf_progs[] = {
+	{ "egress_eth",  0 },
+	{ "egress_ip",   QOSIFY_IP_ONLY },
+	{ "ingress_eth", QOSIFY_INGRESS },
+	{ "ingress_ip",  QOSIFY_INGRESS | QOSIFY_IP_ONLY },
+};
+
 static int qosify_bpf_pr(enum libbpf_print_level level, const char *format,
 		     va_list args)
 {
@@ -38,8 +49,24 @@ static void qosify_fill_rodata(struct bpf_object *obj, uint32_t flags)
 	}
 }
 
+const char *qosify_get_program(uint32_t flags, int *fd)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(bpf_progs); i++) {
+		if (bpf_progs[i].flags != flags)
+			continue;
+
+		*fd = bpf_progs[i].fd;
+		return bpf_progs[i].suffix;
+	}
+
+	return NULL;
+}
+
+
 static int
-qosify_create_program(const char *suffix, uint32_t flags)
+qosify_create_program(int idx)
 {
 	DECLARE_LIBBPF_OPTS(bpf_object_open_opts, opts,
 		.pin_root_path = CLASSIFY_DATA_PATH,
@@ -49,7 +76,7 @@ qosify_create_program(const char *suffix, uint32_t flags)
 	char path[256];
 	int err;
 
-	snprintf(path, sizeof(path), CLASSIFY_PIN_PATH "_" "%s", suffix);
+	snprintf(path, sizeof(path), CLASSIFY_PIN_PATH "_" "%s", bpf_progs[idx].suffix);
 
 	obj = bpf_object__open_file(CLASSIFY_PROG_PATH, &opts);
 	err = libbpf_get_error(obj);
@@ -66,7 +93,7 @@ qosify_create_program(const char *suffix, uint32_t flags)
 
 	bpf_program__set_type(prog, BPF_PROG_TYPE_SCHED_CLS);
 
-	qosify_fill_rodata(obj, flags);
+	qosify_fill_rodata(obj, bpf_progs[idx].flags);
 
 	err = bpf_object__load(obj);
 	if (err) {
@@ -81,24 +108,23 @@ qosify_create_program(const char *suffix, uint32_t flags)
 	if (err) {
 		fprintf(stderr, "Failed to pin program to %s: %s\n",
 			path, strerror(-err));
+		return -1;
 	}
 
 	bpf_object__close(obj);
+
+	err = bpf_obj_get(path);
+	if (err < 0) {
+		fprintf(stderr, "Failed to load pinned program %s: %s\n",
+			path, strerror(errno));
+	}
+	bpf_progs[idx].fd = err;
 
 	return 0;
 }
 
 int qosify_loader_init(void)
 {
-	static const struct {
-		const char *suffix;
-		uint32_t flags;
-	} progs[] = {
-		{ "egress_eth", 0 },
-		{ "egress_ip", QOSIFY_IP_ONLY },
-		{ "ingress_eth", QOSIFY_INGRESS },
-		{ "ingress_ip", QOSIFY_INGRESS | QOSIFY_IP_ONLY },
-	};
 	glob_t g;
 	int i;
 
@@ -107,13 +133,12 @@ int qosify_loader_init(void)
 			unlink(g.gl_pathv[i]);
 	}
 
-
 	libbpf_set_print(qosify_bpf_pr);
 
 	qosify_init_env();
 
-	for (i = 0; i < ARRAY_SIZE(progs); i++) {
-		if (qosify_create_program(progs[i].suffix, progs[i].flags))
+	for (i = 0; i < ARRAY_SIZE(bpf_progs); i++) {
+		if (qosify_create_program(i))
 			return -1;
 	}
 

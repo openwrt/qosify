@@ -2,14 +2,23 @@
 /*
  * Copyright (C) 2021 Felix Fietkau <nbd@nbd.name>
  */
+#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if_arp.h>
 #include <net/if.h>
+#include <netinet/if_ether.h>
 
 #include <unistd.h>
 #include <errno.h>
+
+#include <netlink/msg.h>
+#include <netlink/attr.h>
+#include <netlink/socket.h>
+
+#include <linux/rtnetlink.h>
+#include <linux/pkt_cls.h>
 
 #include <libubox/vlist.h>
 #include <libubox/avl-cmp.h>
@@ -24,6 +33,7 @@ static void interface_update_cb(struct vlist_tree *tree,
 static VLIST_TREE(devices, avl_strcmp, interface_update_cb, true, false);
 static VLIST_TREE(interfaces, avl_strcmp, interface_update_cb, true, false);
 static int socket_fd;
+static struct nl_sock *rtnl_sock;
 
 #define APPEND(_buf, _ofs, _format, ...) _ofs += snprintf(_buf + _ofs, sizeof(_buf) - _ofs, _format, ##__VA_ARGS__)
 
@@ -211,15 +221,44 @@ prepare_filter_cmd(char *buf, int len, const char *dev, int prio, bool add, bool
 static int
 cmd_add_bpf_filter(const char *ifname, int prio, bool egress, bool eth)
 {
-	char buf[512];
-	int ofs;
+	struct tcmsg tcmsg = {
+		.tcm_family = AF_UNSPEC,
+		.tcm_ifindex = if_nametoindex(ifname),
+	};
+	struct nl_msg *msg;
+	struct nlattr *opts;
+	const char *suffix;
+	int prog_fd = -1;
+	char name[32];
 
-	ofs = prepare_filter_cmd(buf, sizeof(buf), ifname, prio, true, egress);
-	APPEND(buf, ofs, " bpf object-pinned /sys/fs/bpf/qosify_%sgress_%s verbose direct-action",
-	       egress ? "e" : "in",
-		   eth ? "eth" : "ip");
+	suffix = qosify_get_program(!egress * QOSIFY_INGRESS + !eth * QOSIFY_IP_ONLY, &prog_fd);
+	if (!suffix)
+		return -1;
 
-	return qosify_run_cmd(buf, false);
+	snprintf(name, sizeof(name), "qosify_%s", suffix);
+
+	if (egress)
+		tcmsg.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_EGRESS);
+	else
+		tcmsg.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS);
+
+	tcmsg.tcm_info = TC_H_MAKE(prio << 16, htons(ETH_P_ALL));
+
+	msg = nlmsg_alloc_simple(RTM_NEWTFILTER, NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL);
+	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
+	nla_put_string(msg, TCA_KIND, "bpf");
+
+	opts = nla_nest_start(msg, TCA_OPTIONS);
+	nla_put_u32(msg, TCA_BPF_FD, prog_fd);
+	nla_put_string(msg, TCA_BPF_NAME, name);
+	nla_put_u32(msg, TCA_BPF_FLAGS, TCA_BPF_FLAG_ACT_DIRECT);
+	nla_put_u32(msg, TCA_BPF_FLAGS_GEN, TCA_CLS_FLAGS_SKIP_HW);
+	nla_nest_end(msg, opts);
+
+	nl_send_auto_complete(rtnl_sock, msg);
+	nlmsg_free(msg);
+
+	return nl_wait_for_ack(rtnl_sock);
 }
 
 static int
@@ -534,11 +573,59 @@ void qosify_iface_status(struct blob_buf *b)
 	blobmsg_close_table(b, c);
 }
 
+static int
+qosify_nl_error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err,
+		   void *arg)
+{
+	struct nlmsghdr *nlh = (struct nlmsghdr *) err - 1;
+	struct nlattr *tb[NLMSGERR_ATTR_MAX + 1];
+	struct nlattr *attrs;
+	int ack_len = sizeof(*nlh) + sizeof(int) + sizeof(*nlh);
+	int len = nlh->nlmsg_len;
+	const char *errstr = "(unknown)";
+
+	if (!(nlh->nlmsg_flags & NLM_F_ACK_TLVS))
+		return NL_STOP;
+
+	if (!(nlh->nlmsg_flags & NLM_F_CAPPED))
+		ack_len += err->msg.nlmsg_len - sizeof(*nlh);
+
+	attrs = (void *) ((unsigned char *) nlh + ack_len);
+	len -= ack_len;
+
+	nla_parse(tb, NLMSGERR_ATTR_MAX, attrs, len, NULL);
+	if (tb[NLMSGERR_ATTR_MSG])
+		errstr = nla_data(tb[NLMSGERR_ATTR_MSG]);
+
+	ULOG_ERR("Netlink error(%d): %s\n", err->error, errstr);
+
+	return NL_STOP;
+}
+
 int qosify_iface_init(void)
 {
+	int fd, opt;
+
 	socket_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (socket < 0)
 		return -1;
+
+	rtnl_sock = nl_socket_alloc();
+	if (!rtnl_sock)
+		return -1;
+
+	if (nl_connect(rtnl_sock, NETLINK_ROUTE))
+		return -1;
+
+	nl_cb_err(nl_socket_get_cb(rtnl_sock), NL_CB_CUSTOM,
+		  qosify_nl_error_cb, NULL);
+
+	fd = nl_socket_get_fd(rtnl_sock);
+	opt = 1;
+	setsockopt(fd, SOL_NETLINK, NETLINK_EXT_ACK, &opt, sizeof(opt));
+
+	opt = 1;
+	setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &opt, sizeof(opt));
 
 	return 0;
 }
@@ -551,5 +638,7 @@ void qosify_iface_stop(void)
 		interface_stop(iface);
 	vlist_for_each_element(&devices, iface, node)
 		interface_stop(iface);
+
+	nl_socket_free(rtnl_sock);
 }
 
