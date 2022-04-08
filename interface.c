@@ -531,6 +531,7 @@ static void qos_iface_check_cb(struct uloop_timeout *t)
 		qosify_iface_check_device(iface);
 	vlist_for_each_element(&interfaces, iface, node)
 		qosify_iface_check_interface(iface);
+	qosify_ubus_update_bridger(false);
 }
 
 void qosify_iface_check(void)
@@ -600,6 +601,25 @@ qosify_nl_error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err,
 	ULOG_ERR("Netlink error(%d): %s\n", err->error, errstr);
 
 	return NL_STOP;
+}
+
+static void
+__qosify_iface_get_device(struct blob_buf *b, struct qosify_iface *iface)
+{
+	if (!iface->ifname[0] || !iface->active)
+		return;
+
+	blobmsg_add_string(b, NULL, iface->ifname);
+}
+
+void qosify_iface_get_devices(struct blob_buf *b)
+{
+	struct qosify_iface *iface;
+
+	vlist_for_each_element(&devices, iface, node)
+		__qosify_iface_get_device(b, iface);
+	vlist_for_each_element(&interfaces, iface, node)
+		__qosify_iface_get_device(b, iface);
 }
 
 int qosify_iface_init(void)

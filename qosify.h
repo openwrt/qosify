@@ -104,6 +104,7 @@ int qosify_iface_init(void);
 void qosify_iface_config_update(struct blob_attr *ifaces, struct blob_attr *devs);
 void qosify_iface_check(void);
 void qosify_iface_status(struct blob_buf *b);
+void qosify_iface_get_devices(struct blob_buf *b);
 void qosify_iface_stop(void);
 
 int qosify_dns_init(void);
@@ -112,5 +113,6 @@ void qosify_dns_stop(void);
 int qosify_ubus_init(void);
 void qosify_ubus_stop(void);
 int qosify_ubus_check_interface(const char *name, char *ifname, int ifname_len);
+void qosify_ubus_update_bridger(bool shutdown);
 
 #endif

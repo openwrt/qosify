@@ -342,6 +342,8 @@ qosify_ubus_event_cb(struct ubus_context *ctx, struct ubus_event_handler *ev,
 	path = blobmsg_get_string(attr);
 	if (!strcmp(path, "dnsmasq.dns"))
 		qosify_subscribe_dnsmasq(ctx);
+	else if (!strcmp(path, "bridger"))
+		qosify_ubus_update_bridger(false);
 }
 
 
@@ -359,6 +361,25 @@ ubus_connect_handler(struct ubus_context *ctx)
 
 static struct ubus_auto_conn conn;
 
+void qosify_ubus_update_bridger(bool shutdown)
+{
+	struct ubus_request req;
+	uint32_t id;
+	void *c;
+
+	if (ubus_lookup_id(&conn.ctx, "bridger", &id))
+		return;
+
+	blob_buf_init(&b, 0);
+	blobmsg_add_string(&b, "name", "qosify");
+	c = blobmsg_open_array(&b, "devices");
+	if (!shutdown)
+		qosify_iface_get_devices(&b);
+	blobmsg_close_array(&b, c);
+
+	ubus_invoke_async(&conn.ctx, id, "set_blacklist", b.head, &req);
+}
+
 int qosify_ubus_init(void)
 {
 	conn.cb = ubus_connect_handler;
@@ -369,6 +390,7 @@ int qosify_ubus_init(void)
 
 void qosify_ubus_stop(void)
 {
+	qosify_ubus_update_bridger(true);
 	ubus_auto_shutdown(&conn);
 }
 
