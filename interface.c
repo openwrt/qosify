@@ -549,7 +549,7 @@ __qosify_iface_status(struct blob_buf *b, struct qosify_iface *iface)
 
 	c = blobmsg_open_table(b, qosify_iface_name(iface));
 	blobmsg_add_u8(b, "active", iface->active);
-	if (iface->ifname)
+	if (iface->ifname[0])
 		blobmsg_add_string(b, "ifname", iface->ifname);
 	blobmsg_add_u8(b, "egress", iface->config.egress);
 	blobmsg_add_u8(b, "ingress", iface->config.ingress);
