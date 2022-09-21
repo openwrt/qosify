@@ -17,6 +17,7 @@
 #include <net/ipv6.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include "bpf_skb_utils.h"
 #include "qosify-bpf.h"
 
 #define INET_ECN_MASK 3
@@ -102,38 +103,6 @@ static struct qosify_config *get_config(void)
 	return bpf_map_lookup_elem(&config, &key);
 }
 
-static __always_inline int proto_is_vlan(__u16 h_proto)
-{
-	return !!(h_proto == bpf_htons(ETH_P_8021Q) ||
-		  h_proto == bpf_htons(ETH_P_8021AD));
-}
-
-static __always_inline int proto_is_ip(__u16 h_proto)
-{
-	return !!(h_proto == bpf_htons(ETH_P_IP) ||
-		  h_proto == bpf_htons(ETH_P_IPV6));
-}
-
-static __always_inline void *skb_ptr(struct __sk_buff *skb, __u32 offset)
-{
-	void *start = (void *)(unsigned long long)skb->data;
-
-	return start + offset;
-}
-
-static __always_inline void *skb_end_ptr(struct __sk_buff *skb)
-{
-	return (void *)(unsigned long long)skb->data_end;
-}
-
-static __always_inline int skb_check(struct __sk_buff *skb, void *ptr)
-{
-	if (ptr > skb_end_ptr(skb))
-		return -1;
-
-	return 0;
-}
-
 static __always_inline __u32 cur_time(void)
 {
 	__u32 val = bpf_ktime_get_ns() >> 24;
@@ -170,8 +139,8 @@ ipv4_change_dsfield(struct __sk_buff *skb, __u32 offset,
 	__u32 check;
 	__u8 dsfield;
 
-	iph = skb_ptr(skb, offset);
-	if (skb_check(skb, iph + 1))
+	iph = skb_ptr(skb, offset, sizeof(*iph));
+	if (!iph)
 		return;
 
 	check = bpf_ntohs(iph->check);
@@ -199,8 +168,8 @@ ipv6_change_dsfield(struct __sk_buff *skb, __u32 offset,
 	__u16 *p;
 	__u16 val;
 
-	ipv6h = skb_ptr(skb, offset);
-	if (skb_check(skb, ipv6h + 1))
+	ipv6h = skb_ptr(skb, offset, sizeof(*ipv6h));
+	if (!ipv6h)
 		return;
 
 	p = (__u16 *)ipv6h;
@@ -214,48 +183,17 @@ ipv6_change_dsfield(struct __sk_buff *skb, __u32 offset,
 	*p = val;
 }
 
-static __always_inline int
-parse_ethernet(struct __sk_buff *skb, __u32 *offset)
-{
-	struct ethhdr *eth;
-	__u16 h_proto;
-	int i;
-
-	eth = skb_ptr(skb, *offset);
-	if (skb_check(skb, eth + 1))
-		return -1;
-
-	h_proto = eth->h_proto;
-	*offset += sizeof(*eth);
-
-#pragma unroll
-	for (i = 0; i < 2; i++) {
-		struct vlan_hdr *vlh = skb_ptr(skb, *offset);
-
-		if (!proto_is_vlan(h_proto))
-			break;
-
-		if (skb_check(skb, vlh + 1))
-			return -1;
-
-		h_proto = vlh->h_vlan_encapsulated_proto;
-		*offset += sizeof(*vlh);
-	}
-
-	return h_proto;
-}
-
 static void
-parse_l4proto(struct qosify_config *config, struct __sk_buff *skb,
-	      __u32 offset, __u8 proto, bool ingress,
-	      __u8 *out_val)
+parse_l4proto(struct qosify_config *config, struct skb_parser_info *info,
+	      bool ingress, __u8 *out_val)
 {
 	struct udphdr *udp;
 	__u32 src, dest, key;
 	__u8 *value;
+	__u8 proto = info->proto;
 
-	udp = skb_ptr(skb, offset);
-	if (skb_check(skb, &udp->len))
+	udp = skb_info_ptr(info, sizeof(*udp));
+	if (!udp)
 		return;
 
 	if (config && (proto == IPPROTO_ICMP || proto == IPPROTO_ICMPV6)) {
@@ -375,7 +313,7 @@ check_flow(struct qosify_flow_config *config, struct __sk_buff *skb,
 }
 
 static __always_inline struct qosify_ip_map_val *
-parse_ipv4(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
+parse_ipv4(struct qosify_config *config, struct skb_parser_info *info,
 	   bool ingress, __u8 *out_val)
 {
 	struct iphdr *iph;
@@ -383,22 +321,11 @@ parse_ipv4(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
 	int hdr_len;
 	void *key;
 
-	iph = skb_ptr(skb, *offset);
-	if (skb_check(skb, iph + 1))
+	iph = skb_parse_ipv4(info, sizeof(struct udphdr));
+	if (!iph)
 		return NULL;
 
-	hdr_len = iph->ihl * 4;
-	if (bpf_skb_pull_data(skb, *offset + hdr_len + sizeof(struct udphdr)))
-		return NULL;
-
-	iph = skb_ptr(skb, *offset);
-	*offset += hdr_len;
-
-	if (skb_check(skb, (void *)(iph + 1)))
-		return NULL;
-
-	ipproto = iph->protocol;
-	parse_l4proto(config, skb, *offset, ipproto, ingress, out_val);
+	parse_l4proto(config, info, ingress, out_val);
 
 	if (ingress)
 		key = &iph->saddr;
@@ -409,29 +336,23 @@ parse_ipv4(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
 }
 
 static __always_inline struct qosify_ip_map_val *
-parse_ipv6(struct qosify_config *config, struct __sk_buff *skb, __u32 *offset,
+parse_ipv6(struct qosify_config *config, struct skb_parser_info *info,
 	   bool ingress, __u8 *out_val)
 {
 	struct ipv6hdr *iph;
 	__u8 ipproto;
 	void *key;
 
-	if (bpf_skb_pull_data(skb, *offset + sizeof(*iph) + sizeof(struct udphdr)))
+	iph = skb_parse_ipv6(info, sizeof(struct udphdr));
+	if (!iph)
 		return NULL;
 
-	iph = skb_ptr(skb, *offset);
-	*offset += sizeof(*iph);
-
-	if (skb_check(skb, (void *)(iph + 1)))
-		return NULL;
-
-	ipproto = iph->nexthdr;
 	if (ingress)
 		key = &iph->saddr;
 	else
 		key = &iph->daddr;
 
-	parse_l4proto(config, skb, *offset, ipproto, ingress, out_val);
+	parse_l4proto(config, info, ingress, out_val);
 
 	return bpf_map_lookup_elem(&ipv6_map, key);
 }
@@ -465,14 +386,14 @@ dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class)
 SEC("tc")
 int classify(struct __sk_buff *skb)
 {
+	struct skb_parser_info info;
 	bool ingress = module_flags & QOSIFY_INGRESS;
 	struct qosify_config *config;
 	struct qosify_class *class = NULL;
 	struct qosify_ip_map_val *ip_val;
-	__u32 offset = 0;
 	__u32 iph_offset;
+	__u8 dscp = 0;
 	void *iph;
-	__u8 dscp;
 	bool force;
 	int type;
 
@@ -480,16 +401,22 @@ int classify(struct __sk_buff *skb)
 	if (!config)
 		return TC_ACT_UNSPEC;
 
-	if (module_flags & QOSIFY_IP_ONLY)
-		type = skb->protocol;
-	else
-		type = parse_ethernet(skb, &offset);
+	skb_parse_init(&info, skb);
+	if (module_flags & QOSIFY_IP_ONLY) {
+		type = info.proto = skb->protocol;
+	} else if (skb_parse_ethernet(&info)) {
+		skb_parse_vlan(&info);
+		skb_parse_vlan(&info);
+		type = info.proto;
+	} else {
+		return TC_ACT_UNSPEC;
+	}
 
-	iph_offset = offset;
+	iph_offset = info.offset;
 	if (type == bpf_htons(ETH_P_IP))
-		ip_val = parse_ipv4(config, skb, &offset, ingress, &dscp);
+		ip_val = parse_ipv4(config, &info, ingress, &dscp);
 	else if (type == bpf_htons(ETH_P_IPV6))
-		ip_val = parse_ipv6(config, skb, &offset, ingress, &dscp);
+		ip_val = parse_ipv6(config, &info, ingress, &dscp);
 	else
 		return TC_ACT_UNSPEC;
 
