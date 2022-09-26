@@ -196,11 +196,14 @@ void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val)
 	else
 		return;
 
-	if (!memcmp(&qosify_dscp_default[udp], &val, sizeof(val)))
-		return;
+	if (val != 0xff) {
+		if (qosify_dscp_default[udp] == val)
+			return;
 
-	qosify_dscp_default[udp] = val;
-	__qosify_map_set_dscp_default(id, val);
+		qosify_dscp_default[udp] = val;
+	}
+
+	__qosify_map_set_dscp_default(id, qosify_dscp_default[udp]);
 }
 
 int qosify_map_init(void)
@@ -648,6 +651,9 @@ void qosify_map_reload(void)
 		__qosify_map_load_file(f->filename);
 
 	qosify_map_gc();
+
+	qosify_map_set_dscp_default(CL_MAP_TCP_PORTS, 0xff);
+	qosify_map_set_dscp_default(CL_MAP_UDP_PORTS, 0xff);
 }
 
 static void qosify_map_free_entry(struct qosify_map_entry *e)
