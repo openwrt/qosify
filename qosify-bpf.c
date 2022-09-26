@@ -221,7 +221,7 @@ parse_l4proto(struct qosify_config *config, struct skb_parser_info *info,
 		*out_val = *value;
 }
 
-static __always_inline void
+static __always_inline bool
 check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
 		struct flow_bucket *flow, __u8 *out_val)
 {
@@ -229,9 +229,10 @@ check_flow_bulk(struct qosify_flow_config *config, struct __sk_buff *skb,
 	__s32 delta;
 	__u32 time;
 	int segs = 1;
+	bool ret = false;
 
 	if (!config->bulk_trigger_pps)
-		return;
+		return false;
 
 	time = cur_time();
 	if (!flow->last_update)
@@ -264,39 +265,51 @@ clear:
 	flow->pkt_count = 1;
 	flow->last_update = time;
 out:
-	if (flow->bulk_timeout)
+	if (flow->bulk_timeout) {
 		*out_val = config->dscp_bulk;
+		return true;
+	}
+
+	return false;
 }
 
-static __always_inline void
+static __always_inline bool
 check_flow_prio(struct qosify_flow_config *config, struct __sk_buff *skb,
 		struct flow_bucket *flow, __u8 *out_val)
 {
 	int cur_len = skb->len;
 
 	if (flow->bulk_timeout)
-		return;
+		return false;
 
 	if (!config->prio_max_avg_pkt_len)
-		return;
+		return false;
 
 	if (skb->gso_segs > 1)
 		cur_len /= skb->gso_segs;
 
-	if (ewma(&flow->pkt_len_avg, cur_len) <= config->prio_max_avg_pkt_len)
+	if (ewma(&flow->pkt_len_avg, cur_len) <= config->prio_max_avg_pkt_len) {
 		*out_val = config->dscp_prio;
+		return true;
+	}
+
+	return false;
 }
 
-static __always_inline void
+static __always_inline bool
 check_flow(struct qosify_flow_config *config, struct __sk_buff *skb,
 	   __u8 *out_val)
 {
 	struct flow_bucket flow_data;
 	struct flow_bucket *flow;
 	__u32 hash;
+	bool ret = false;
 
 	if (!config)
-		return;
+		return false;
+
+	if (!config->prio_max_avg_pkt_len && !config->bulk_trigger_pps)
+		return false;
 
 	hash = bpf_get_hash_recalc(skb);
 	flow = bpf_map_lookup_elem(&flow_map, &hash);
@@ -305,11 +318,13 @@ check_flow(struct qosify_flow_config *config, struct __sk_buff *skb,
 		bpf_map_update_elem(&flow_map, &hash, &flow_data, BPF_ANY);
 		flow = bpf_map_lookup_elem(&flow_map, &hash);
 		if (!flow)
-			return;
+			return false;
 	}
 
-	check_flow_bulk(config, skb, flow, out_val);
-	check_flow_prio(config, skb, flow, out_val);
+	ret |= check_flow_bulk(config, skb, flow, out_val);
+	ret |= check_flow_prio(config, skb, flow, out_val);
+
+	return ret;
 }
 
 static __always_inline struct qosify_ip_map_val *
@@ -430,9 +445,8 @@ int classify(struct __sk_buff *skb)
 		return TC_ACT_UNSPEC;
 
 	if (class) {
-		check_flow(&class->config, skb, &dscp);
-
-		if (dscp_lookup_class(&dscp, ingress, &class))
+		if (check_flow(&class->config, skb, &dscp) &&
+		    dscp_lookup_class(&dscp, ingress, &class))
 			return TC_ACT_UNSPEC;
 	}
 
