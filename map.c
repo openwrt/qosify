@@ -142,7 +142,7 @@ static void qosify_map_clear_list(enum qosify_map_id id)
 	int fd = qosify_map_fds[id];
 	__u32 key[4] = {};
 
-	while (bpf_map_get_next_key(fd, &key, &key) != -1)
+	while (bpf_map_get_next_key(fd, &key, &key) == 0)
 		bpf_map_delete_elem(fd, &key);
 }
 
