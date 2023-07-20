@@ -56,6 +56,8 @@ struct qosify_class {
 	struct qosify_dscp_val val;
 
 	uint8_t flags;
+
+	uint64_t packets;
 };
 
 #endif

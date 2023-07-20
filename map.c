@@ -883,6 +883,32 @@ void qosify_map_dump(struct blob_buf *b)
 	blobmsg_close_array(b, a);
 }
 
+void qosify_map_stats(struct blob_buf *b, bool reset)
+{
+	struct qosify_class data;
+	uint32_t i;
+
+	for (i = 0; i < ARRAY_SIZE(map_class); i++) {
+		void *c;
+
+		if (!map_class[i])
+			continue;
+
+		if (bpf_map_lookup_elem(qosify_map_fds[CL_MAP_CLASS], &i, &data) < 0)
+			continue;
+
+		c = blobmsg_open_table(b, map_class[i]->name);
+		blobmsg_add_u64(b, "packets", data.packets);
+		blobmsg_close_table(b, c);
+
+		if (!reset)
+			continue;
+
+		data.packets = 0;
+		bpf_map_update_elem(qosify_map_fds[CL_MAP_CLASS], &i, &data, BPF_ANY);
+	}
+}
+
 static int32_t
 qosify_map_get_class_id(const char *name)
 {

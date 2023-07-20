@@ -227,6 +227,28 @@ qosify_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
 }
 
 static int
+qosify_ubus_get_stats(struct ubus_context *ctx, struct ubus_object *obj,
+		      struct ubus_request_data *req, const char *method,
+		      struct blob_attr *msg)
+{
+	static const struct blobmsg_policy policy =
+		{ "reset", BLOBMSG_TYPE_BOOL };
+	struct blob_attr *tb;
+	bool reset = false;
+
+	blobmsg_parse(&policy, 1, &tb, blobmsg_data(msg), blobmsg_len(msg));
+
+	reset = tb && blobmsg_get_u8(tb);
+
+	blob_buf_init(&b, 0);
+	qosify_map_stats(&b, reset);
+	ubus_send_reply(ctx, req, b.head);
+	blob_buf_free(&b);
+
+	return 0;
+}
+
+static int
 qosify_ubus_check_devices(struct ubus_context *ctx, struct ubus_object *obj,
 			  struct ubus_request_data *req, const char *method,
 			  struct blob_attr *msg)
@@ -293,6 +315,7 @@ static const struct ubus_method qosify_methods[] = {
 	UBUS_METHOD("config", qosify_ubus_config, qosify_config_policy),
 	UBUS_METHOD_NOARG("dump", qosify_ubus_dump),
 	UBUS_METHOD_NOARG("status", qosify_ubus_status),
+	UBUS_METHOD_NOARG("get_stats", qosify_ubus_get_stats),
 	UBUS_METHOD("add_dns_host", qosify_ubus_add_dns_host, qosify_dns_policy),
 	UBUS_METHOD_NOARG("check_devices", qosify_ubus_check_devices),
 };
