@@ -199,7 +199,7 @@ interface_ifb_name(struct qosify_iface *iface)
 
 	ifname[4] = iface->ifname[0];
 	ifname[5] = iface->ifname[1];
-	snprintf(ifname + 6, IFNAMSIZ - 6, "%s", iface->ifname + len - (IFNAMSIZ + 6) - 1);
+	snprintf(ifname + 6, IFNAMSIZ - 6, "%s", iface->ifname + len - (IFNAMSIZ - 6) - 1);
 
 	return ifname;
 }
@@ -627,7 +627,7 @@ int qosify_iface_init(void)
 	int fd, opt;
 
 	socket_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
-	if (socket < 0)
+	if (socket_fd < 0)
 		return -1;
 
 	rtnl_sock = nl_socket_alloc();
