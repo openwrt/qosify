@@ -627,7 +627,7 @@ int qosify_iface_init(void)
 	int fd, opt;
 
 	socket_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
-	if (socket < 0)
+	if (socket_fd < 0)
 		return -1;
 
 	rtnl_sock = nl_socket_alloc();
