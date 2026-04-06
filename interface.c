@@ -45,6 +45,7 @@ struct qosify_iface_config {
 	bool nat;
 	bool host_isolate;
 	bool autorate_ingress;
+	bool multiqueue;
 
 	const char *bandwidth_up;
 	const char *bandwidth_down;
@@ -78,6 +79,7 @@ enum {
 	IFACE_ATTR_INGRESS_OPTS,
 	IFACE_ATTR_EGRESS_OPTS,
 	IFACE_ATTR_OPTS,
+	IFACE_ATTR_MULTIQUEUE,
 	__IFACE_ATTR_MAX
 };
 
@@ -101,6 +103,7 @@ iface_config_parse(struct blob_attr *attr, struct blob_attr **tb)
 		[IFACE_ATTR_INGRESS_OPTS] = { "ingress_options", BLOBMSG_TYPE_STRING },
 		[IFACE_ATTR_EGRESS_OPTS] = { "egress_options", BLOBMSG_TYPE_STRING },
 		[IFACE_ATTR_OPTS] = { "options", BLOBMSG_TYPE_STRING },
+		[IFACE_ATTR_MULTIQUEUE] = { "multiqueue", BLOBMSG_TYPE_BOOL },
 	};
 
 	blobmsg_parse(policy, __IFACE_ATTR_MAX, tb, blobmsg_data(attr), blobmsg_len(attr));
@@ -160,6 +163,7 @@ iface_config_set(struct qosify_iface *iface, struct blob_attr *attr)
 	cfg->host_isolate = true;
 	cfg->autorate_ingress = false;
 	cfg->nat = !iface->device;
+	cfg->multiqueue = false;
 
 	if ((cur = tb[IFACE_ATTR_BW_UP]) != NULL)
 		cfg->bandwidth_up = check_str(cur);
@@ -183,6 +187,8 @@ iface_config_set(struct qosify_iface *iface, struct blob_attr *attr)
 		cfg->host_isolate = blobmsg_get_bool(cur);
 	if ((cur = tb[IFACE_ATTR_AUTORATE_IN]) != NULL)
 		cfg->autorate_ingress = blobmsg_get_bool(cur);
+	if ((cur = tb[IFACE_ATTR_MULTIQUEUE]) != NULL)
+		cfg->multiqueue = blobmsg_get_bool(cur);
 }
 
 static const char *
@@ -267,13 +273,14 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 	struct qosify_iface_config *cfg = &iface->config;
 	const char *bw = egress ? cfg->bandwidth_up : cfg->bandwidth_down;
 	const char *dir_opts = egress ? cfg->egress_opts : cfg->ingress_opts;
+	const char *cake = cfg->multiqueue ? "root cake_mq" : "root cake";
 	char buf[512];
 	int ofs;
 
 	ofs = prepare_qdisc_cmd(buf, sizeof(buf), ifname, true, "clsact");
 	qosify_run_cmd(buf, true);
 
-	ofs = prepare_qdisc_cmd(buf, sizeof(buf), ifname, true, "root cake");
+	ofs = prepare_qdisc_cmd(buf, sizeof(buf), ifname, true, cake);
 	if (bw)
 		APPEND(buf, ofs, " bandwidth %s", bw);
 

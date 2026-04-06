@@ -86,6 +86,9 @@ interface/device properties:
 - "options": STRING
 	CAKE options for ingress + egress
 
+- "multiqueue": BOOL
+	Use cake_mq instead of cake
+
 
 Mapping file syntax:
 
