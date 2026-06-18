@@ -79,6 +79,7 @@ struct dns_answer {
 struct cname_entry {
 	struct avl_node node;
 	uint32_t seq;
+	uint32_t pattern_id;
 	uint8_t dscp;
 	uint8_t age;
 };
@@ -128,7 +129,7 @@ proto_is_vlan(uint16_t proto)
 }
 
 static void
-cname_cache_set(const char *name, uint8_t dscp, uint32_t seq)
+cname_cache_set(const char *name, uint8_t dscp, uint32_t seq, uint32_t pattern_id)
 {
 	struct cname_entry *e;
 
@@ -145,10 +146,11 @@ cname_cache_set(const char *name, uint8_t dscp, uint32_t seq)
 	e->age = 0;
 	e->dscp = dscp;
 	e->seq = seq;
+	e->pattern_id = pattern_id;
 }
 
 static int
-cname_cache_get(const char *name, uint8_t *dscp, uint32_t *seq)
+cname_cache_get(const char *name, uint8_t *dscp, uint32_t *seq, uint32_t *pattern_id)
 {
 	struct cname_entry *e;
 
@@ -162,13 +164,16 @@ cname_cache_get(const char *name, uint8_t *dscp, uint32_t *seq)
 	if (*dscp == 0xff || e->seq < *seq) {
 		*dscp = e->dscp;
 		*seq = e->seq;
+		if (pattern_id)
+			*pattern_id = e->pattern_id;
 	}
 
 	return 0;
 }
 
 static int
-dns_parse_question(struct packet *pkt, const void *hdr, uint8_t *dscp, uint32_t *seq)
+dns_parse_question(struct packet *pkt, const void *hdr, uint8_t *dscp,
+		   uint32_t *seq, uint32_t *pattern_id)
 {
 	char qname[MAX_NAME_LEN];
 
@@ -176,14 +181,15 @@ dns_parse_question(struct packet *pkt, const void *hdr, uint8_t *dscp, uint32_t 
 	    !pkt_pull(pkt, sizeof(struct dns_question)))
 		return -1;
 
-	cname_cache_get(qname, dscp, seq);
-	qosify_map_lookup_dns_entry(qname, false, dscp, seq);
+	cname_cache_get(qname, dscp, seq, pattern_id);
+	qosify_map_lookup_dns_entry(qname, false, dscp, seq, pattern_id);
 
 	return 0;
 }
 
 static int
-dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp, uint32_t *seq)
+dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp, uint32_t *seq,
+		 uint32_t *pattern_id)
 {
 	struct qosify_map_data data = {};
 	char cname[MAX_NAME_LEN];
@@ -210,8 +216,8 @@ dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp, uint32_t *seq)
 			      cname, sizeof(cname)) < 0)
 			return -1;
 
-		qosify_map_lookup_dns_entry(cname, true, dscp, seq);
-		cname_cache_set(cname, *dscp, *seq);
+		qosify_map_lookup_dns_entry(cname, true, dscp, seq, pattern_id);
+		cname_cache_set(cname, *dscp, *seq, pattern_id ? *pattern_id : 0);
 
 		return 0;
 	case TYPE_A:
@@ -228,6 +234,7 @@ dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp, uint32_t *seq)
 
 	data.user = true;
 	data.dscp = *dscp;
+	data.pattern_id = pattern_id ? *pattern_id : 0;
 
 	prev_timeout = qosify_map_timeout;
 	qosify_map_timeout = be32_to_cpu(a->ttl);
@@ -242,6 +249,7 @@ qosify_dns_data_cb(struct packet *pkt)
 {
 	struct dns_header *h;
 	uint32_t lookup_seq = 0;
+	uint32_t pattern_id = 0;
 	uint8_t dscp = 0xff;
 	int i;
 
@@ -256,11 +264,11 @@ qosify_dns_data_cb(struct packet *pkt)
 	if (h->questions != cpu_to_be16(1))
 		return;
 
-	if (dns_parse_question(pkt, h, &dscp, &lookup_seq))
+	if (dns_parse_question(pkt, h, &dscp, &lookup_seq, &pattern_id))
 		return;
 
 	for (i = 0; i < be16_to_cpu(h->answers); i++)
-		if (dns_parse_answer(pkt, h, &dscp, &lookup_seq))
+		if (dns_parse_answer(pkt, h, &dscp, &lookup_seq, &pattern_id))
 			return;
 }
 

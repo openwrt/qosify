@@ -255,6 +255,10 @@ qosify_ubus_get_stats(struct ubus_context *ctx, struct ubus_object *obj,
 	qosify_map_dscp_stats(&b, reset);
 	blobmsg_close_table(&b, c);
 
+	c = blobmsg_open_table(&b, "dns");
+	qosify_map_dns_stats(&b, reset);
+	blobmsg_close_table(&b, c);
+
 	ubus_send_reply(ctx, req, b.head);
 	blob_buf_free(&b);
 

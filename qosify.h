@@ -37,6 +37,7 @@ enum qosify_map_id {
 	CL_MAP_CONFIG,
 	CL_MAP_DNS,
 	CL_MAP_DSCP_STATS,
+	CL_MAP_PATTERN_STATS,
 	__CL_MAP_MAX,
 };
 
@@ -48,6 +49,7 @@ struct qosify_map_data {
 
 	uint8_t dscp;
 	uint8_t file_dscp;
+	uint32_t pattern_id;
 
 	union {
 		uint32_t port;
@@ -66,6 +68,8 @@ struct qosify_map_entry {
 	struct avl_node avl;
 
 	uint32_t timeout;
+	uint64_t hits;
+	uint32_t pattern_id;
 
 	struct qosify_map_data data;
 };
@@ -93,11 +97,13 @@ void qosify_map_gc(void);
 void qosify_map_dump(struct blob_buf *b);
 void qosify_map_stats(struct blob_buf *b, bool reset);
 void qosify_map_dscp_stats(struct blob_buf *b, bool reset);
+void qosify_map_dns_stats(struct blob_buf *b, bool reset);
 void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val);
 void qosify_map_reset_config(void);
 void qosify_map_update_config(void);
 void qosify_map_set_classes(struct blob_attr *val);
-int qosify_map_lookup_dns_entry(char *host, bool cname, uint8_t *dscp, uint32_t *seq);
+int qosify_map_lookup_dns_entry(char *host, bool cname, uint8_t *dscp, uint32_t *seq,
+				uint32_t *pattern_id);
 int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int ttl);
 int map_parse_flow_config(struct qosify_flow_config *cfg, struct blob_attr *attr,
 			  bool reset);

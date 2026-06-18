@@ -104,6 +104,14 @@ struct {
 	__uint(max_entries, QOSIFY_DSCP_MAX);
 } dscp_stats SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+	__uint(pinning, 1);
+	__type(key, __u32);
+	__type(value, struct qosify_pattern_stats);
+	__uint(max_entries, QOSIFY_PATTERN_STATS_MAX);
+} pattern_stats SEC(".maps");
+
 static struct qosify_config *get_config(void)
 {
 	__u32 key = 0;
@@ -380,6 +388,22 @@ parse_ipv6(struct qosify_config *config, struct skb_parser_info *info,
 	return bpf_map_lookup_elem(&ipv6_map, key);
 }
 
+static __always_inline void
+account_pattern(__u32 pattern_id, __u32 pkt_len)
+{
+	struct qosify_pattern_stats *stats;
+
+	if (!pattern_id)
+		return;
+
+	stats = bpf_map_lookup_elem(&pattern_stats, &pattern_id);
+	if (!stats)
+		return;
+
+	stats->packets++;
+	stats->bytes += pkt_len;
+}
+
 static __always_inline int
 dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class,
 		  bool counter, __u32 pkt_len)
@@ -451,6 +475,7 @@ int classify(struct __sk_buff *skb)
 	if (ip_val) {
 		if (!ip_val->seen)
 			ip_val->seen = 1;
+		account_pattern(ip_val->pattern_id, skb->len);
 		dscp = ip_val->dscp;
 	}
 

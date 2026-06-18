@@ -48,6 +48,7 @@ struct qosify_config {
 struct qosify_ip_map_val {
 	uint8_t dscp; /* must be first */
 	uint8_t seen;
+	uint32_t pattern_id;
 };
 
 struct qosify_class {
@@ -64,6 +65,13 @@ struct qosify_class {
 #define QOSIFY_DSCP_MAX 64
 
 struct qosify_dscp_stats {
+	uint64_t packets;
+	uint64_t bytes;
+};
+
+#define QOSIFY_PATTERN_STATS_MAX 1024
+
+struct qosify_pattern_stats {
 	uint64_t packets;
 	uint64_t bytes;
 };

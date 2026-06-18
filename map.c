@@ -32,6 +32,7 @@ int qosify_active_timeout;
 struct qosify_config config;
 struct qosify_flow_config flow_config;
 static uint32_t map_dns_seq;
+static uint32_t next_pattern_id = 1;
 
 struct qosify_map_file {
 	struct list_head list;
@@ -55,6 +56,7 @@ static const struct {
 	[CL_MAP_CLASS] = { "class_map", "class" },
 	[CL_MAP_DNS] = { "dns", "dns" },
 	[CL_MAP_DSCP_STATS] = { "dscp_stats", "dscp_stats" },
+	[CL_MAP_PATTERN_STATS] = { "pattern_stats", "pattern_stats" },
 };
 
 static const struct {
@@ -222,6 +224,10 @@ int qosify_map_init(void)
 	if (qosify_map_fds[CL_MAP_DSCP_STATS] < 0)
 		return -1;
 
+	qosify_map_fds[CL_MAP_PATTERN_STATS] = qosify_map_get_fd(CL_MAP_PATTERN_STATS);
+	if (qosify_map_fds[CL_MAP_PATTERN_STATS] < 0)
+		return -1;
+
 	qosify_map_clear_list(CL_MAP_IPV4_ADDR);
 	qosify_map_clear_list(CL_MAP_IPV6_ADDR);
 	qosify_map_reset_config();
@@ -294,6 +300,20 @@ __qosify_map_alloc_entry(struct qosify_map_data *data)
 	return e;
 }
 
+static void qosify_pattern_stats_create(uint32_t pattern_id)
+{
+	int fd = qosify_map_fds[CL_MAP_PATTERN_STATS];
+	int ncpu = libbpf_num_possible_cpus();
+
+	if (!pattern_id || ncpu <= 0)
+		return;
+
+	struct qosify_pattern_stats vals[ncpu];
+
+	memset(vals, 0, sizeof(vals));
+	bpf_map_update_elem(fd, &pattern_id, vals, BPF_NOEXIST);
+}
+
 void __qosify_map_set_entry(struct qosify_map_data *data)
 {
 	int fd = qosify_map_fds[data->id];
@@ -337,13 +357,22 @@ void __qosify_map_set_entry(struct qosify_map_data *data)
 		struct qosify_ip_map_val val = {
 			.dscp = e->data.dscp,
 			.seen = 1,
+			.pattern_id = data->pattern_id,
 		};
 
+		e->pattern_id = data->pattern_id;
 		bpf_map_update_elem(fd, &data->addr, &val, BPF_ANY);
 	}
 
-	if (data->id == CL_MAP_DNS)
+	if (data->id == CL_MAP_DNS) {
 		e->data.addr.dns.seq = ++map_dns_seq;
+		if (!e->pattern_id) {
+			e->pattern_id = next_pattern_id++;
+			if (!next_pattern_id)
+				next_pattern_id = 1;
+			qosify_pattern_stats_create(e->pattern_id);
+		}
+	}
 
 	if (add) {
 		if (qosify_map_timeout == ~0 || file) {
@@ -664,11 +693,13 @@ void qosify_map_reload(void)
 
 static void qosify_map_free_entry(struct qosify_map_entry *e)
 {
-	int fd = qosify_map_fds[e->data.id];
-
 	avl_delete(&map_data, &e->avl);
+
 	if (e->data.id < CL_MAP_DNS)
-		bpf_map_delete_elem(fd, &e->data.addr);
+		bpf_map_delete_elem(qosify_map_fds[e->data.id], &e->data.addr);
+	else if (e->data.id == CL_MAP_DNS && e->pattern_id)
+		bpf_map_delete_elem(qosify_map_fds[CL_MAP_PATTERN_STATS], &e->pattern_id);
+
 	free(e);
 }
 
@@ -731,7 +762,8 @@ void qosify_map_gc(void)
 	uloop_timeout_set(&qosify_map_timer, timeout * 1000);
 }
 
-int qosify_map_lookup_dns_entry(char *host, bool cname, uint8_t *dscp, uint32_t *seq)
+int qosify_map_lookup_dns_entry(char *host, bool cname, uint8_t *dscp, uint32_t *seq,
+				uint32_t *pattern_id)
 {
 	struct qosify_map_data data = {
 		.id = CL_MAP_DNS,
@@ -768,7 +800,10 @@ int qosify_map_lookup_dns_entry(char *host, bool cname, uint8_t *dscp, uint32_t 
 		if (*dscp == 0xff || e->data.addr.dns.seq < *seq) {
 			*dscp = e->data.dscp;
 			*seq = e->data.addr.dns.seq;
+			if (pattern_id)
+				*pattern_id = e->pattern_id;
 		}
+		e->hits++;
 		ret = 0;
 	}
 
@@ -784,7 +819,8 @@ int qosify_map_add_dns_host(char *host, const char *addr, const char *type, int 
 	int prev_timeout = qosify_map_timeout;
 	uint32_t lookup_seq = 0;
 
-	if (qosify_map_lookup_dns_entry(host, false, &data.dscp, &lookup_seq))
+	if (qosify_map_lookup_dns_entry(host, false, &data.dscp, &lookup_seq,
+					&data.pattern_id))
 		return 0;
 
 	data.user = true;
@@ -959,6 +995,62 @@ void qosify_map_dscp_stats(struct blob_buf *b, bool reset)
 		data.packets = 0;
 		data.bytes = 0;
 		bpf_map_update_elem(qosify_map_fds[CL_MAP_DSCP_STATS], &i, &data, BPF_ANY);
+	}
+}
+
+void qosify_map_dns_stats(struct blob_buf *b, bool reset)
+{
+	int stats_fd = qosify_map_fds[CL_MAP_PATTERN_STATS];
+	int ncpu = libbpf_num_possible_cpus();
+	struct qosify_map_entry *e;
+	struct qosify_map_data data = {
+		.id = CL_MAP_DNS,
+		.addr.dns.pattern = "",
+	};
+
+	if (ncpu <= 0)
+		return;
+
+	struct qosify_pattern_stats vals[ncpu];
+
+	e = avl_find_ge_element(&map_data, &data, e, avl);
+	if (!e)
+		return;
+
+	avl_for_element_to_last(&map_data, e, e, avl) {
+		uint64_t packets = 0, bytes = 0;
+		void *c;
+		int i;
+
+		if (e->data.id != CL_MAP_DNS)
+			break;
+
+		if (e->pattern_id &&
+		    bpf_map_lookup_elem(stats_fd, &e->pattern_id, vals) == 0) {
+			for (i = 0; i < ncpu; i++) {
+				packets += vals[i].packets;
+				bytes += vals[i].bytes;
+			}
+		}
+
+		if (!e->hits && !packets && !bytes)
+			continue;
+
+		c = blobmsg_open_table(b, e->data.addr.dns.pattern);
+		blobmsg_add_dscp(b, "dscp", e->data.dscp);
+		blobmsg_add_u64(b, "hits", e->hits);
+		blobmsg_add_u64(b, "packets", packets);
+		blobmsg_add_u64(b, "bytes", bytes);
+		blobmsg_close_table(b, c);
+
+		if (!reset)
+			continue;
+
+		e->hits = 0;
+		if (e->pattern_id) {
+			memset(vals, 0, sizeof(vals));
+			bpf_map_update_elem(stats_fd, &e->pattern_id, vals, BPF_ANY);
+		}
 	}
 }
 
