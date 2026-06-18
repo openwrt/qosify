@@ -41,6 +41,10 @@ static struct uloop_fd ufd;
 static struct uloop_timeout cname_gc_timer;
 static AVL_TREE(cname_cache, avl_strcmp, false, NULL);
 
+static uint64_t dns_cache_hits;
+static uint64_t dns_cache_misses;
+static uint32_t dns_cache_entry_count;
+
 struct vlan_hdr {
 	uint16_t tci;
 	uint16_t proto;
@@ -135,6 +139,7 @@ cname_cache_set(const char *name, uint8_t dscp, uint32_t seq)
 		e = calloc_a(sizeof(*e), &name_buf, strlen(name) + 1);
 		e->node.key = strcpy(name_buf, name);
 		avl_insert(&cname_cache, &e->node);
+		dns_cache_entry_count++;
 	}
 
 	e->age = 0;
@@ -148,9 +153,12 @@ cname_cache_get(const char *name, uint8_t *dscp, uint32_t *seq)
 	struct cname_entry *e;
 
 	e = avl_find_element(&cname_cache, name, e, node);
-	if (!e)
+	if (!e) {
+		dns_cache_misses++;
 		return -1;
+	}
 
+	dns_cache_hits++;
 	if (*dscp == 0xff || e->seq < *seq) {
 		*dscp = e->dscp;
 		*seq = e->seq;
@@ -344,6 +352,7 @@ qosify_cname_cache_gc(struct uloop_timeout *timeout)
 			continue;
 
 		avl_delete(&cname_cache, &e->node);
+		dns_cache_entry_count--;
 		free(e);
 	}
 
@@ -417,5 +426,19 @@ void qosify_dns_stop(void)
 
 	avl_remove_all_elements(&cname_cache, e, node, tmp)
 		free(e);
+
+	dns_cache_entry_count = 0;
+}
+
+void qosify_dns_get_stats(struct blob_buf *b, bool reset)
+{
+	blobmsg_add_u64(b, "hits", dns_cache_hits);
+	blobmsg_add_u64(b, "misses", dns_cache_misses);
+	blobmsg_add_u32(b, "size", dns_cache_entry_count);
+
+	if (reset) {
+		dns_cache_hits = 0;
+		dns_cache_misses = 0;
+	}
 }
 

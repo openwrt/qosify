@@ -243,6 +243,10 @@ qosify_ubus_get_stats(struct ubus_context *ctx, struct ubus_object *obj,
 
 	blob_buf_init(&b, 0);
 
+	c = blobmsg_open_table(&b, "dns_cache");
+	qosify_dns_get_stats(&b, reset);
+	blobmsg_close_table(&b, c);
+
 	c = blobmsg_open_table(&b, "classes");
 	qosify_map_stats(&b, reset);
 	blobmsg_close_table(&b, c);

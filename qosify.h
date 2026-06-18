@@ -112,6 +112,7 @@ void qosify_iface_stop(void);
 
 int qosify_dns_init(void);
 void qosify_dns_stop(void);
+void qosify_dns_get_stats(struct blob_buf *b, bool reset);
 
 int qosify_ubus_init(void);
 void qosify_ubus_stop(void);
