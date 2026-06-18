@@ -235,13 +235,18 @@ qosify_ubus_get_stats(struct ubus_context *ctx, struct ubus_object *obj,
 		{ "reset", BLOBMSG_TYPE_BOOL };
 	struct blob_attr *tb;
 	bool reset = false;
+	void *c;
 
 	blobmsg_parse(&policy, 1, &tb, blobmsg_data(msg), blobmsg_len(msg));
 
 	reset = tb && blobmsg_get_u8(tb);
 
 	blob_buf_init(&b, 0);
+
+	c = blobmsg_open_table(&b, "classes");
 	qosify_map_stats(&b, reset);
+	blobmsg_close_table(&b, c);
+
 	ubus_send_reply(ctx, req, b.head);
 	blob_buf_free(&b);
 
