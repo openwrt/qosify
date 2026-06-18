@@ -900,12 +900,14 @@ void qosify_map_stats(struct blob_buf *b, bool reset)
 
 		c = blobmsg_open_table(b, map_class[i]->name);
 		blobmsg_add_u64(b, "packets", data.packets);
+		blobmsg_add_u64(b, "bytes", data.bytes);
 		blobmsg_close_table(b, c);
 
 		if (!reset)
 			continue;
 
 		data.packets = 0;
+		data.bytes = 0;
 		bpf_map_update_elem(qosify_map_fds[CL_MAP_CLASS], &i, &data, BPF_ANY);
 	}
 }

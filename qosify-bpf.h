@@ -58,6 +58,7 @@ struct qosify_class {
 	uint8_t flags;
 
 	uint64_t packets;
+	uint64_t bytes;
 };
 
 #endif

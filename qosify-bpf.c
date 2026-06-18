@@ -374,7 +374,7 @@ parse_ipv6(struct qosify_config *config, struct skb_parser_info *info,
 
 static __always_inline int
 dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class,
-		  bool counter)
+		  bool counter, __u32 pkt_len)
 {
 	struct qosify_class *class;
 	__u8 fallback_flag;
@@ -392,8 +392,10 @@ dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class,
 	if (!(class->flags & QOSIFY_CLASS_FLAG_PRESENT))
 		return -1;
 
-	if (counter)
-	    class->packets++;
+	if (counter) {
+		class->packets++;
+		class->bytes += pkt_len;
+	}
 	*dscp = dscp_val(&class->val, ingress);
 	*dscp |= fallback_flag;
 	*out_class = class;
@@ -444,12 +446,12 @@ int classify(struct __sk_buff *skb)
 		dscp = ip_val->dscp;
 	}
 
-	if (dscp_lookup_class(&dscp, ingress, &class, true))
+	if (dscp_lookup_class(&dscp, ingress, &class, true, skb->len))
 		return TC_ACT_UNSPEC;
 
 	if (class) {
 		if (check_flow(&class->config, skb, &dscp) &&
-		    dscp_lookup_class(&dscp, ingress, &class, false))
+		    dscp_lookup_class(&dscp, ingress, &class, false, 0))
 			return TC_ACT_UNSPEC;
 	}
 
