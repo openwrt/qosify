@@ -96,6 +96,14 @@ struct {
 			    QOSIFY_DEFAULT_CLASS_ENTRIES);
 } class_map SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(pinning, 1);
+	__type(key, __u32);
+	__type(value, struct qosify_dscp_stats);
+	__uint(max_entries, QOSIFY_DSCP_MAX);
+} dscp_stats SEC(".maps");
+
 static struct qosify_config *get_config(void)
 {
 	__u32 key = 0;
@@ -456,6 +464,16 @@ int classify(struct __sk_buff *skb)
 	}
 
 	dscp &= GENMASK(5, 0);
+
+	struct qosify_dscp_stats *stats;
+	__u32 dscp_key = dscp;
+
+	stats = bpf_map_lookup_elem(&dscp_stats, &dscp_key);
+	if (stats) {
+		stats->packets++;
+		stats->bytes += skb->len;
+	}
+
 	dscp <<= 2;
 	force = !(dscp & QOSIFY_DSCP_FALLBACK_FLAG);
 

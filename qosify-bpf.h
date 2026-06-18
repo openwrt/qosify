@@ -61,4 +61,11 @@ struct qosify_class {
 	uint64_t bytes;
 };
 
+#define QOSIFY_DSCP_MAX 64
+
+struct qosify_dscp_stats {
+	uint64_t packets;
+	uint64_t bytes;
+};
+
 #endif

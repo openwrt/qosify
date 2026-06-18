@@ -54,6 +54,7 @@ static const struct {
 	[CL_MAP_CONFIG] = { "config", "config" },
 	[CL_MAP_CLASS] = { "class_map", "class" },
 	[CL_MAP_DNS] = { "dns", "dns" },
+	[CL_MAP_DSCP_STATS] = { "dscp_stats", "dscp_stats" },
 };
 
 static const struct {
@@ -216,6 +217,10 @@ int qosify_map_init(void)
 		if (qosify_map_fds[i] < 0)
 			return -1;
 	}
+
+	qosify_map_fds[CL_MAP_DSCP_STATS] = qosify_map_get_fd(CL_MAP_DSCP_STATS);
+	if (qosify_map_fds[CL_MAP_DSCP_STATS] < 0)
+		return -1;
 
 	qosify_map_clear_list(CL_MAP_IPV4_ADDR);
 	qosify_map_clear_list(CL_MAP_IPV6_ADDR);
@@ -909,6 +914,51 @@ void qosify_map_stats(struct blob_buf *b, bool reset)
 		data.packets = 0;
 		data.bytes = 0;
 		bpf_map_update_elem(qosify_map_fds[CL_MAP_CLASS], &i, &data, BPF_ANY);
+	}
+}
+
+static const char *
+qosify_dscp_name(uint8_t dscp, char *buf, size_t len)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(codepoints); i++) {
+		if (codepoints[i].val == dscp)
+			return codepoints[i].name;
+	}
+
+	snprintf(buf, len, "0x%02x", dscp);
+	return buf;
+}
+
+void qosify_map_dscp_stats(struct blob_buf *b, bool reset)
+{
+	struct qosify_dscp_stats data;
+	char name_buf[8];
+	uint32_t i;
+
+	for (i = 0; i < QOSIFY_DSCP_MAX; i++) {
+		const char *name;
+		void *c;
+
+		if (bpf_map_lookup_elem(qosify_map_fds[CL_MAP_DSCP_STATS], &i, &data) < 0)
+			continue;
+
+		if (!data.packets && !data.bytes)
+			continue;
+
+		name = qosify_dscp_name(i, name_buf, sizeof(name_buf));
+		c = blobmsg_open_table(b, name);
+		blobmsg_add_u64(b, "packets", data.packets);
+		blobmsg_add_u64(b, "bytes", data.bytes);
+		blobmsg_close_table(b, c);
+
+		if (!reset)
+			continue;
+
+		data.packets = 0;
+		data.bytes = 0;
+		bpf_map_update_elem(qosify_map_fds[CL_MAP_DSCP_STATS], &i, &data, BPF_ANY);
 	}
 }
 

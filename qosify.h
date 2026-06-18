@@ -36,6 +36,7 @@ enum qosify_map_id {
 	CL_MAP_CLASS,
 	CL_MAP_CONFIG,
 	CL_MAP_DNS,
+	CL_MAP_DSCP_STATS,
 	__CL_MAP_MAX,
 };
 
@@ -91,6 +92,7 @@ void qosify_map_clear_files(void);
 void qosify_map_gc(void);
 void qosify_map_dump(struct blob_buf *b);
 void qosify_map_stats(struct blob_buf *b, bool reset);
+void qosify_map_dscp_stats(struct blob_buf *b, bool reset);
 void qosify_map_set_dscp_default(enum qosify_map_id id, uint8_t val);
 void qosify_map_reset_config(void);
 void qosify_map_update_config(void);
