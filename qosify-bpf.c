@@ -388,8 +388,13 @@ parse_ipv6(struct qosify_config *config, struct skb_parser_info *info,
 	return bpf_map_lookup_elem(&ipv6_map, key);
 }
 
+static __always_inline __u32 skb_packets(struct __sk_buff *skb)
+{
+	return skb->gso_segs ? skb->gso_segs : 1;
+}
+
 static __always_inline void
-account_pattern(__u32 pattern_id, __u32 pkt_len)
+account_pattern(__u32 pattern_id, __u32 pkt_count, __u32 pkt_len)
 {
 	struct qosify_pattern_stats *stats;
 
@@ -400,13 +405,13 @@ account_pattern(__u32 pattern_id, __u32 pkt_len)
 	if (!stats)
 		return;
 
-	stats->packets++;
+	stats->packets += pkt_count;
 	stats->bytes += pkt_len;
 }
 
 static __always_inline int
 dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class,
-		  bool counter, __u32 pkt_len)
+		  bool counter, __u32 pkt_count, __u32 pkt_len)
 {
 	struct qosify_class *class;
 	__u8 fallback_flag;
@@ -425,7 +430,7 @@ dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class,
 		return -1;
 
 	if (counter) {
-		class->packets++;
+		class->packets += pkt_count;
 		class->bytes += pkt_len;
 	}
 	*dscp = dscp_val(&class->val, ingress);
@@ -443,6 +448,7 @@ int classify(struct __sk_buff *skb)
 	struct qosify_config *config;
 	struct qosify_class *class = NULL;
 	struct qosify_ip_map_val *ip_val;
+	__u32 packets = skb_packets(skb);
 	__u32 iph_offset;
 	__u8 dscp = 0;
 	void *iph;
@@ -475,16 +481,16 @@ int classify(struct __sk_buff *skb)
 	if (ip_val) {
 		if (!ip_val->seen)
 			ip_val->seen = 1;
-		account_pattern(ip_val->pattern_id, skb->len);
+		account_pattern(ip_val->pattern_id, packets, skb->len);
 		dscp = ip_val->dscp;
 	}
 
-	if (dscp_lookup_class(&dscp, ingress, &class, true, skb->len))
+	if (dscp_lookup_class(&dscp, ingress, &class, true, packets, skb->len))
 		return TC_ACT_UNSPEC;
 
 	if (class) {
 		if (check_flow(&class->config, skb, &dscp) &&
-		    dscp_lookup_class(&dscp, ingress, &class, false, 0))
+		    dscp_lookup_class(&dscp, ingress, &class, false, 0, 0))
 			return TC_ACT_UNSPEC;
 	}
 
@@ -495,7 +501,7 @@ int classify(struct __sk_buff *skb)
 
 	stats = bpf_map_lookup_elem(&dscp_stats, &dscp_key);
 	if (stats) {
-		stats->packets++;
+		stats->packets += packets;
 		stats->bytes += skb->len;
 	}
 
