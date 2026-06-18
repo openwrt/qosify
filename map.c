@@ -82,6 +82,7 @@ static const struct {
 	{ "AF43", 38 },
 	{ "EF", 46 },
 	{ "VA", 44 },
+	{ "NQB", 45 },
 	{ "LE", 1 },
 	{ "DF", 0 },
 };
