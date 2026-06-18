@@ -120,6 +120,9 @@ int qosify_dns_init(void);
 void qosify_dns_stop(void);
 void qosify_dns_get_stats(struct blob_buf *b, bool reset);
 
+uint32_t qosify_map_get_ebpf_entry_count(void);
+uint32_t qosify_map_get_last_reload_time(void);
+
 int qosify_ubus_init(void);
 void qosify_ubus_stop(void);
 int qosify_ubus_check_interface(const char *name, char *ifname, int ifname_len);

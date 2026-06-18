@@ -32,6 +32,7 @@ int qosify_active_timeout;
 struct qosify_config config;
 struct qosify_flow_config flow_config;
 static uint32_t map_dns_seq;
+static uint32_t last_reload_time;
 static uint32_t next_pattern_id = 1;
 
 struct qosify_map_file {
@@ -231,6 +232,8 @@ int qosify_map_init(void)
 	qosify_map_clear_list(CL_MAP_IPV4_ADDR);
 	qosify_map_clear_list(CL_MAP_IPV6_ADDR);
 	qosify_map_reset_config();
+
+	last_reload_time = qosify_gettime();
 
 	return 0;
 }
@@ -680,6 +683,8 @@ void qosify_map_reload(void)
 {
 	struct qosify_map_file *f;
 
+	last_reload_time = qosify_gettime();
+
 	qosify_map_reset_file_entries();
 
 	list_for_each_entry(f, &map_files, list)
@@ -923,6 +928,37 @@ void qosify_map_dump(struct blob_buf *b)
 		blobmsg_close_table(b, c);
 	}
 	blobmsg_close_array(b, a);
+}
+
+static uint32_t qosify_map_count_entries(int map_fd)
+{
+	__u32 key[4] = {}, next_key[4];
+	uint32_t count = 0;
+
+	if (map_fd < 0)
+		return 0;
+
+	while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
+		count++;
+		memcpy(&key, &next_key, sizeof(key));
+	}
+
+	return count;
+}
+
+uint32_t qosify_map_get_ebpf_entry_count(void)
+{
+	uint32_t total = 0;
+
+	total += qosify_map_count_entries(qosify_map_fds[CL_MAP_IPV4_ADDR]);
+	total += qosify_map_count_entries(qosify_map_fds[CL_MAP_IPV6_ADDR]);
+
+	return total;
+}
+
+uint32_t qosify_map_get_last_reload_time(void)
+{
+	return (uint32_t)time(NULL) - (qosify_gettime() - last_reload_time);
 }
 
 void qosify_map_stats(struct blob_buf *b, bool reset)

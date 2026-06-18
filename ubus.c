@@ -243,6 +243,9 @@ qosify_ubus_get_stats(struct ubus_context *ctx, struct ubus_object *obj,
 
 	blob_buf_init(&b, 0);
 
+	blobmsg_add_u32(&b, "ebpf_map_entries", qosify_map_get_ebpf_entry_count());
+	blobmsg_add_u32(&b, "last_reload_time", qosify_map_get_last_reload_time());
+
 	c = blobmsg_open_table(&b, "dns_cache");
 	qosify_dns_get_stats(&b, reset);
 	blobmsg_close_table(&b, c);
