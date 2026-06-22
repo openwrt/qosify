@@ -199,6 +199,28 @@ ipv6_change_dsfield(struct __sk_buff *skb, __u32 offset,
 	*p = val;
 }
 
+static __always_inline __u8
+ipv4_get_dscp(struct __sk_buff *skb, __u32 offset)
+{
+	struct iphdr *iph = skb_ptr(skb, offset, sizeof(*iph));
+
+	if (!iph)
+		return 0;
+
+	return iph->tos >> 2;
+}
+
+static __always_inline __u8
+ipv6_get_dscp(struct __sk_buff *skb, __u32 offset)
+{
+	struct ipv6hdr *ip6h = skb_ptr(skb, offset, sizeof(*ip6h));
+
+	if (!ip6h)
+		return 0;
+
+	return (bpf_ntohs(*(__u16 *)ip6h) >> 6) & 0x3f;
+}
+
 static void
 parse_l4proto(struct qosify_config *config, struct skb_parser_info *info,
 	      bool ingress, __u8 *out_val)
@@ -409,12 +431,27 @@ account_pattern(__u32 pattern_id, __u32 pkt_count, __u32 pkt_len)
 	stats->bytes += pkt_len;
 }
 
+static __always_inline void
+account_dscp(__u8 dscp, __u32 pkt_count, __u32 pkt_len)
+{
+	struct qosify_dscp_stats *stats;
+	__u32 key = dscp & GENMASK(5, 0);
+
+	stats = bpf_map_lookup_elem(&dscp_stats, &key);
+	if (!stats)
+		return;
+
+	__sync_fetch_and_add(&stats->packets, pkt_count);
+	__sync_fetch_and_add(&stats->bytes, pkt_len);
+}
+
 static __always_inline int
 dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class,
 		  bool counter, __u32 pkt_count, __u32 pkt_len)
 {
 	struct qosify_class *class;
 	__u8 fallback_flag;
+	bool present;
 	__u32 key;
 
 	if (!(*dscp & QOSIFY_DSCP_CLASS_FLAG))
@@ -426,13 +463,19 @@ dscp_lookup_class(uint8_t *dscp, bool ingress, struct qosify_class **out_class,
 	if (!class)
 		return -1;
 
-	if (!(class->flags & QOSIFY_CLASS_FLAG_PRESENT))
+	present = class->flags & QOSIFY_CLASS_FLAG_PRESENT;
+	if (!present && key < QOSIFY_MAX_CLASS_ENTRIES)
 		return -1;
 
 	if (counter) {
-		class->packets += pkt_count;
-		class->bytes += pkt_len;
+		__sync_fetch_and_add(&class->packets, pkt_count);
+		__sync_fetch_and_add(&class->bytes, pkt_len);
 	}
+
+	/* default classes are counted but keep the packet unmarked */
+	if (!present)
+		return -1;
+
 	*dscp = dscp_val(&class->val, ingress);
 	*dscp |= fallback_flag;
 	*out_class = class;
@@ -484,33 +527,29 @@ int classify(struct __sk_buff *skb)
 		dscp = ip_val->dscp;
 	}
 
-	if (dscp_lookup_class(&dscp, ingress, &class, true, packets, skb->len))
-		return TC_ACT_UNSPEC;
-
-	if (class) {
-		if (check_flow(&class->config, skb, &dscp) &&
+	if (!dscp_lookup_class(&dscp, ingress, &class, true, packets, skb->len)) {
+		if (class &&
+		    check_flow(&class->config, skb, &dscp) &&
 		    dscp_lookup_class(&dscp, ingress, &class, false, 0, 0))
-			return TC_ACT_UNSPEC;
+			goto out;
+
+		dscp &= GENMASK(5, 0);
+		dscp <<= 2;
+		force = !(dscp & QOSIFY_DSCP_FALLBACK_FLAG);
+
+		if (type == bpf_htons(ETH_P_IP))
+			ipv4_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
+		else if (type == bpf_htons(ETH_P_IPV6))
+			ipv6_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
 	}
 
-	dscp &= GENMASK(5, 0);
-
-	struct qosify_dscp_stats *stats;
-	__u32 dscp_key = dscp;
-
-	stats = bpf_map_lookup_elem(&dscp_stats, &dscp_key);
-	if (stats) {
-		stats->packets += packets;
-		stats->bytes += skb->len;
-	}
-
-	dscp <<= 2;
-	force = !(dscp & QOSIFY_DSCP_FALLBACK_FLAG);
-
+out:
 	if (type == bpf_htons(ETH_P_IP))
-		ipv4_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
-	else if (type == bpf_htons(ETH_P_IPV6))
-		ipv6_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
+		dscp = ipv4_get_dscp(skb, iph_offset);
+	else
+		dscp = ipv6_get_dscp(skb, iph_offset);
+
+	account_dscp(dscp, packets, skb->len);
 
 	return TC_ACT_UNSPEC;
 }
