@@ -961,32 +961,45 @@ uint32_t qosify_map_get_last_reload_time(void)
 	return (uint32_t)time(NULL) - (qosify_gettime() - last_reload_time);
 }
 
-void qosify_map_stats(struct blob_buf *b, bool reset)
+static void
+qosify_map_stats_class(struct blob_buf *b, const char *name, uint32_t key, bool reset)
 {
 	struct qosify_class data;
+	void *c;
+
+	if (bpf_map_lookup_elem(qosify_map_fds[CL_MAP_CLASS], &key, &data) < 0)
+		return;
+
+	c = blobmsg_open_table(b, name);
+	blobmsg_add_u64(b, "packets", data.packets);
+	blobmsg_add_u64(b, "bytes", data.bytes);
+	blobmsg_close_table(b, c);
+
+	if (!reset)
+		return;
+
+	data.packets = 0;
+	data.bytes = 0;
+	bpf_map_update_elem(qosify_map_fds[CL_MAP_CLASS], &key, &data, BPF_ANY);
+}
+
+void qosify_map_stats(struct blob_buf *b, bool reset)
+{
+	static const char * const default_name[QOSIFY_DEFAULT_CLASS_ENTRIES] = {
+		"tcp_default", "udp_default"
+	};
 	uint32_t i;
 
 	for (i = 0; i < ARRAY_SIZE(map_class); i++) {
-		void *c;
-
 		if (!map_class[i])
 			continue;
 
-		if (bpf_map_lookup_elem(qosify_map_fds[CL_MAP_CLASS], &i, &data) < 0)
-			continue;
-
-		c = blobmsg_open_table(b, map_class[i]->name);
-		blobmsg_add_u64(b, "packets", data.packets);
-		blobmsg_add_u64(b, "bytes", data.bytes);
-		blobmsg_close_table(b, c);
-
-		if (!reset)
-			continue;
-
-		data.packets = 0;
-		data.bytes = 0;
-		bpf_map_update_elem(qosify_map_fds[CL_MAP_CLASS], &i, &data, BPF_ANY);
+		qosify_map_stats_class(b, map_class[i]->name, i, reset);
 	}
+
+	for (i = 0; i < QOSIFY_DEFAULT_CLASS_ENTRIES; i++)
+		qosify_map_stats_class(b, default_name[i],
+				       QOSIFY_MAX_CLASS_ENTRIES + i, reset);
 }
 
 static const char *
