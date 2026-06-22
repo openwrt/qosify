@@ -451,7 +451,6 @@ int classify(struct __sk_buff *skb)
 	__u32 packets = skb_packets(skb);
 	__u32 iph_offset;
 	__u8 dscp = 0;
-	void *iph;
 	bool force;
 	int type;
 
