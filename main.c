@@ -127,6 +127,7 @@ int main(int argc, char **argv)
 
 	qosify_ubus_stop();
 	qosify_iface_stop();
+	qosify_dns_stop();
 
 	uloop_done();
 
