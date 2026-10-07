@@ -28,6 +28,39 @@
 
 #define EWMA_SHIFT		12
 
+#ifndef IP_MF
+#define IP_MF			0x2000
+#endif
+#ifndef IP_OFFSET
+#define IP_OFFSET		0x1fff
+#endif
+
+#define IPV4_FRAG_ENTRIES	1024
+/* mirror the default IPv4 reassembly timeout of Linux (ipfrag_time) */
+#define IPV4_FRAG_TIMEOUT	((u32)((30ULL * 1000000000ULL) >> 24))
+
+enum {
+	IPV4_FRAG_NONE,
+	IPV4_FRAG_FIRST,
+	IPV4_FRAG_OTHER,
+};
+
+struct ipv4_frag_key {
+	__be32 saddr;
+	__be32 daddr;
+	__be16 id;
+	__u8 protocol;
+	__u8 ingress;
+};
+
+struct ipv4_frag_val {
+	__u32 last_update;
+	__u32 pattern_id;
+	__u8 dscp;
+	__u8 class_val;
+	__u8 pad[2];
+};
+
 const volatile static uint32_t module_flags = 0;
 
 struct flow_bucket {
@@ -86,6 +119,20 @@ struct {
 	__uint(max_entries, 100000);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } ipv6_map SEC(".maps");
+
+/*
+ * Final DSCP value of the first fragment of an IPv4 datagram, for the
+ * other fragments. The map is shared by the ingress and egress programs,
+ * and a forwarded datagram can be seen in both directions with the same
+ * addresses and ID, so the direction is part of the key.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(pinning, 1);
+	__type(key, struct ipv4_frag_key);
+	__type(value, struct ipv4_frag_val);
+	__uint(max_entries, IPV4_FRAG_ENTRIES);
+} ipv4_frags SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -223,28 +270,36 @@ ipv6_get_dscp(struct __sk_buff *skb, __u32 offset)
 
 static void
 parse_l4proto(struct qosify_config *config, struct skb_parser_info *info,
-	      bool ingress, __u8 *out_val)
+	      bool ingress, bool fragment, __u8 *out_val)
 {
 	struct udphdr *udp;
 	__u32 src, dest, key;
 	__u8 *value;
 	__u8 proto = info->proto;
 
-	udp = skb_info_ptr(info, sizeof(*udp));
-	if (!udp)
-		return;
+	if (fragment) {
+		/*
+		 * Only the first fragment carries the ports, port 0 has the
+		 * default value of the protocol.
+		 */
+		key = 0;
+	} else {
+		udp = skb_info_ptr(info, sizeof(*udp));
+		if (!udp)
+			return;
+
+		src = READ_ONCE(udp->source);
+		dest = READ_ONCE(udp->dest);
+		if (ingress)
+			key = src;
+		else
+			key = dest;
+	}
 
 	if (config && (proto == IPPROTO_ICMP || proto == IPPROTO_ICMPV6)) {
 		*out_val = config->dscp_icmp;
 		return;
 	}
-
-	src = READ_ONCE(udp->source);
-	dest = READ_ONCE(udp->dest);
-	if (ingress)
-		key = src;
-	else
-		key = dest;
 
 	if (proto == IPPROTO_TCP) {
 		value = bpf_map_lookup_elem(&tcp_ports, &key);
@@ -367,7 +422,8 @@ check_flow(struct qosify_flow_config *config, struct __sk_buff *skb,
 
 static __always_inline struct qosify_ip_map_val *
 parse_ipv4(struct qosify_config *config, struct skb_parser_info *info,
-	   bool ingress, __u8 *out_val)
+	   bool ingress, struct ipv4_frag_key *frag_key, __u8 *frag,
+	   __u8 *out_val)
 {
 	struct iphdr *iph;
 	__u8 ipproto;
@@ -378,7 +434,20 @@ parse_ipv4(struct qosify_config *config, struct skb_parser_info *info,
 	if (!iph)
 		return NULL;
 
-	parse_l4proto(config, info, ingress, out_val);
+	if (iph->frag_off & bpf_htons(IP_MF | IP_OFFSET)) {
+		frag_key->saddr = iph->saddr;
+		frag_key->daddr = iph->daddr;
+		frag_key->id = iph->id;
+		frag_key->protocol = iph->protocol;
+		frag_key->ingress = ingress;
+
+		if (iph->frag_off & bpf_htons(IP_OFFSET))
+			*frag = IPV4_FRAG_OTHER;
+		else
+			*frag = IPV4_FRAG_FIRST;
+	}
+
+	parse_l4proto(config, info, ingress, *frag == IPV4_FRAG_OTHER, out_val);
 
 	if (ingress)
 		key = &iph->saddr;
@@ -405,7 +474,7 @@ parse_ipv6(struct qosify_config *config, struct skb_parser_info *info,
 	else
 		key = &iph->daddr;
 
-	parse_l4proto(config, info, ingress, out_val);
+	parse_l4proto(config, info, ingress, false, out_val);
 
 	return bpf_map_lookup_elem(&ipv6_map, key);
 }
@@ -491,8 +560,13 @@ int classify(struct __sk_buff *skb)
 	struct qosify_config *config;
 	struct qosify_class *class = NULL;
 	struct qosify_ip_map_val *ip_val;
+	struct ipv4_frag_key frag_key;
+	struct ipv4_frag_val *frag_val;
 	__u32 packets = skb_packets(skb);
+	__u8 frag = IPV4_FRAG_NONE;
+	__u32 pattern_id = 0;
 	__u32 iph_offset;
+	__u8 class_val;
 	__u8 dscp = 0;
 	bool force;
 	int type;
@@ -512,20 +586,43 @@ int classify(struct __sk_buff *skb)
 		return TC_ACT_UNSPEC;
 	}
 
+	__builtin_memset(&frag_key, 0, sizeof(frag_key));
 	iph_offset = info.offset;
 	if (type == bpf_htons(ETH_P_IP))
-		ip_val = parse_ipv4(config, &info, ingress, &dscp);
+		ip_val = parse_ipv4(config, &info, ingress, &frag_key, &frag, &dscp);
 	else if (type == bpf_htons(ETH_P_IPV6))
 		ip_val = parse_ipv6(config, &info, ingress, &dscp);
 	else
 		return TC_ACT_UNSPEC;
 
+	/*
+	 * Give the other fragments of a datagram the final value of the first
+	 * fragment, and count them like it. Without it, they are classified
+	 * without ports.
+	 */
+	if (frag == IPV4_FRAG_OTHER) {
+		frag_val = bpf_map_lookup_elem(&ipv4_frags, &frag_key);
+		if (frag_val &&
+		    cur_time() - frag_val->last_update <= IPV4_FRAG_TIMEOUT) {
+			class_val = frag_val->class_val;
+			account_pattern(frag_val->pattern_id, packets, skb->len);
+			dscp_lookup_class(&class_val, ingress, &class, true,
+					  packets, skb->len);
+			ipv4_change_dsfield(skb, iph_offset, INET_ECN_MASK,
+					    frag_val->dscp << 2, true);
+			goto out;
+		}
+	}
+
 	if (ip_val) {
 		if (!ip_val->seen)
 			ip_val->seen = 1;
-		account_pattern(ip_val->pattern_id, packets, skb->len);
+		pattern_id = ip_val->pattern_id;
+		account_pattern(pattern_id, packets, skb->len);
 		dscp = ip_val->dscp;
 	}
+
+	class_val = dscp;
 
 	if (!dscp_lookup_class(&dscp, ingress, &class, true, packets, skb->len)) {
 		if (class &&
@@ -548,6 +645,17 @@ out:
 		dscp = ipv4_get_dscp(skb, iph_offset);
 	else
 		dscp = ipv6_get_dscp(skb, iph_offset);
+
+	if (frag == IPV4_FRAG_FIRST) {
+		struct ipv4_frag_val val = {
+			.last_update = cur_time(),
+			.pattern_id = pattern_id,
+			.dscp = dscp,
+			.class_val = class_val,
+		};
+
+		bpf_map_update_elem(&ipv4_frags, &frag_key, &val, BPF_ANY);
+	}
 
 	account_dscp(dscp, packets, skb->len);
 
