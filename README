@@ -88,8 +88,9 @@ interface/device properties:
 
 - "multiqueue": BOOL
 	Use cake_mq instead of cake on devices with more than one transmit
-	queue. The ifb device for ingress has a single queue and keeps
-	using cake.
+	queue. The ifb device for ingress gets one queue per receive queue
+	of the device, so ingress uses cake_mq on devices with more than
+	one receive queue.
 
 
 Mapping file syntax:

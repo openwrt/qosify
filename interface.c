@@ -19,6 +19,7 @@
 #include <netlink/socket.h>
 
 #include <linux/rtnetlink.h>
+#include <linux/if_link.h>
 #include <linux/pkt_cls.h>
 
 #include <libubox/vlist.h>
@@ -269,13 +270,13 @@ cmd_add_bpf_filter(const char *ifname, int prio, bool egress, bool eth)
 }
 
 static int
-interface_tx_queues(const char *ifname)
+interface_queues(const char *ifname, const char *type)
 {
 	char path[64];
 	glob_t gl;
 	int queues = 1;
 
-	snprintf(path, sizeof(path), "/sys/class/net/%s/queues/tx-*", ifname);
+	snprintf(path, sizeof(path), "/sys/class/net/%s/queues/%s-*", ifname, type);
 	if (glob(path, 0, NULL, &gl) == 0) {
 		queues = gl.gl_pathc;
 		globfree(&gl);
@@ -295,7 +296,7 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 	int ofs;
 
 	/* cake_mq can only be attached to a device with several queues */
-	if (cfg->multiqueue && interface_tx_queues(ifname) > 1)
+	if (cfg->multiqueue && interface_queues(ifname, "tx") > 1)
 		cake = "root cake_mq";
 
 	ofs = prepare_qdisc_cmd(buf, sizeof(buf), ifname, true, "clsact");
@@ -324,11 +325,45 @@ cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool 
 }
 
 static int
+cmd_add_ifb(const char *ifname, int queues)
+{
+	struct ifinfomsg ifi = {
+		.ifi_family = AF_UNSPEC,
+	};
+	struct nlattr *linkinfo;
+	struct nl_msg *msg;
+	int ret;
+
+	msg = nlmsg_alloc_simple(RTM_NEWLINK, NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL);
+	if (!msg)
+		return -1;
+
+	nlmsg_append(msg, &ifi, sizeof(ifi), NLMSG_ALIGNTO);
+	nla_put_string(msg, IFLA_IFNAME, ifname);
+	nla_put_u32(msg, IFLA_NUM_TX_QUEUES, queues);
+	nla_put_u32(msg, IFLA_NUM_RX_QUEUES, queues);
+
+	linkinfo = nla_nest_start(msg, IFLA_LINKINFO);
+	nla_put_string(msg, IFLA_INFO_KIND, "ifb");
+	nla_nest_end(msg, linkinfo);
+
+	nl_send_auto_complete(rtnl_sock, msg);
+	nlmsg_free(msg);
+
+	ret = nl_wait_for_ack(rtnl_sock);
+	if (ret)
+		ULOG_ERR("failed to create %s\n", ifname);
+
+	return ret;
+}
+
+static int
 cmd_add_ingress(struct qosify_iface *iface, bool eth)
 {
 	const char *ifbdev = interface_ifb_name(iface);
 	char buf[256];
 	int prio = QOSIFY_PRIO_BASE;
+	int queues = 1;
 	int ofs;
 
 	cmd_add_bpf_filter(iface->ifname, prio++, false, eth);
@@ -357,8 +392,14 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 	if (!iface->config.ingress)
 		return 0;
 
-	snprintf(buf, sizeof(buf), "ip link add '%s' type ifb", ifbdev);
-	qosify_run_cmd(buf, false);
+	/*
+	 * Packets keep the number of their receive queue on the ifb device,
+	 * so each receive queue gets its own cake instance.
+	 */
+	if (iface->config.multiqueue)
+		queues = interface_queues(iface->ifname, "rx");
+
+	cmd_add_ifb(ifbdev, queues);
 
 	cmd_add_qdisc(iface, ifbdev, false, eth);
 
