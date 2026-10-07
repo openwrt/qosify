@@ -160,7 +160,7 @@ ipv4_change_dsfield(struct __sk_buff *skb, __u32 offset,
 		return;
 
 	check = bpf_ntohs(iph->check);
-	if ((iph->tos & mask) && !force)
+	if ((iph->tos & ~mask) && !force)
 		return;
 
 	dsfield = (iph->tos & mask) | value;
@@ -189,7 +189,7 @@ ipv6_change_dsfield(struct __sk_buff *skb, __u32 offset,
 		return;
 
 	p = (__u16 *)ipv6h;
-	if (((*p >> 4) & mask) && !force)
+	if (((bpf_ntohs(*p) >> 4) & 0xff & ~mask) && !force)
 		return;
 
 	val = (*p & bpf_htons((((__u16)mask << 4) | 0xf00f))) | bpf_htons((__u16)value << 4);
@@ -533,9 +533,9 @@ int classify(struct __sk_buff *skb)
 		    dscp_lookup_class(&dscp, ingress, &class, false, 0, 0))
 			goto out;
 
+		force = !(dscp & QOSIFY_DSCP_FALLBACK_FLAG);
 		dscp &= GENMASK(5, 0);
 		dscp <<= 2;
-		force = !(dscp & QOSIFY_DSCP_FALLBACK_FLAG);
 
 		if (type == bpf_htons(ETH_P_IP))
 			ipv4_change_dsfield(skb, iph_offset, INET_ECN_MASK, dscp, force);
