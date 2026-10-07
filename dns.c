@@ -221,10 +221,16 @@ dns_parse_answer(struct packet *pkt, void *hdr, uint8_t *dscp, uint32_t *seq,
 
 		return 0;
 	case TYPE_A:
+		if (len != 4)
+			return 0;
+
 		data.id = CL_MAP_IPV4_ADDR;
 		memcpy(&data.addr, rdata, 4);
 		break;
 	case TYPE_AAAA:
+		if (len != 16)
+			return 0;
+
 		data.id = CL_MAP_IPV6_ADDR;
 		memcpy(&data.addr, rdata, 16);
 		break;
