@@ -12,6 +12,7 @@
 
 #include <unistd.h>
 #include <errno.h>
+#include <glob.h>
 
 #include <netlink/msg.h>
 #include <netlink/attr.h>
@@ -268,14 +269,34 @@ cmd_add_bpf_filter(const char *ifname, int prio, bool egress, bool eth)
 }
 
 static int
+interface_tx_queues(const char *ifname)
+{
+	char path[64];
+	glob_t gl;
+	int queues = 1;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/queues/tx-*", ifname);
+	if (glob(path, 0, NULL, &gl) == 0) {
+		queues = gl.gl_pathc;
+		globfree(&gl);
+	}
+
+	return queues;
+}
+
+static int
 cmd_add_qdisc(struct qosify_iface *iface, const char *ifname, bool egress, bool eth)
 {
 	struct qosify_iface_config *cfg = &iface->config;
 	const char *bw = egress ? cfg->bandwidth_up : cfg->bandwidth_down;
 	const char *dir_opts = egress ? cfg->egress_opts : cfg->ingress_opts;
-	const char *cake = cfg->multiqueue ? "root cake_mq" : "root cake";
+	const char *cake = "root cake";
 	char buf[512];
 	int ofs;
+
+	/* cake_mq can only be attached to a device with several queues */
+	if (cfg->multiqueue && interface_tx_queues(ifname) > 1)
+		cake = "root cake_mq";
 
 	ofs = prepare_qdisc_cmd(buf, sizeof(buf), ifname, true, "clsact");
 	qosify_run_cmd(buf, true);

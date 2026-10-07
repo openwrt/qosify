@@ -87,7 +87,9 @@ interface/device properties:
 	CAKE options for ingress + egress
 
 - "multiqueue": BOOL
-	Use cake_mq instead of cake
+	Use cake_mq instead of cake on devices with more than one transmit
+	queue. The ifb device for ingress has a single queue and keeps
+	using cake.
 
 
 Mapping file syntax:
