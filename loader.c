@@ -64,6 +64,26 @@ const char *qosify_get_program(uint32_t flags, int *fd)
 	return NULL;
 }
 
+static void
+qosify_pin_path(char *path, size_t len, int idx)
+{
+	snprintf(path, len, CLASSIFY_PIN_PATH "_" "%s", bpf_progs[idx].suffix);
+}
+
+static void
+qosify_data_unpin(void)
+{
+	glob_t g;
+	int i;
+
+	if (glob(CLASSIFY_DATA_PATH "/*", 0, NULL, &g) != 0)
+		return;
+
+	for (i = 0; i < g.gl_pathc; i++)
+		unlink(g.gl_pathv[i]);
+
+	globfree(&g);
+}
 
 static int
 qosify_create_program(int idx)
@@ -76,7 +96,7 @@ qosify_create_program(int idx)
 	char path[256];
 	int err;
 
-	snprintf(path, sizeof(path), CLASSIFY_PIN_PATH "_" "%s", bpf_progs[idx].suffix);
+	qosify_pin_path(path, sizeof(path), idx);
 
 	obj = bpf_object__open_file(CLASSIFY_PROG_PATH, &opts);
 	err = libbpf_get_error(obj);
@@ -125,13 +145,9 @@ qosify_create_program(int idx)
 
 int qosify_loader_init(void)
 {
-	glob_t g;
 	int i;
 
-	if (glob(CLASSIFY_DATA_PATH "/*", 0, NULL, &g) == 0) {
-		for (i = 0; i < g.gl_pathc; i++)
-			unlink(g.gl_pathv[i]);
-	}
+	qosify_data_unpin();
 
 	libbpf_set_print(qosify_bpf_pr);
 
@@ -143,4 +159,20 @@ int qosify_loader_init(void)
 	}
 
 	return 0;
+}
+
+/* The pinned programs hold the maps; without the unpin the maps stay
+ * allocated in the kernel after the daemon has exited. */
+void qosify_loader_stop(void)
+{
+	char path[256];
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(bpf_progs); i++) {
+		qosify_pin_path(path, sizeof(path), i);
+		unlink(path);
+	}
+
+	qosify_data_unpin();
+	rmdir(CLASSIFY_DATA_PATH);
 }
