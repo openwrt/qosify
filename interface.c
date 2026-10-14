@@ -21,6 +21,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/if_link.h>
 #include <linux/pkt_cls.h>
+#include <linux/tc_act/tc_mirred.h>
 
 #include <libubox/vlist.h>
 #include <libubox/avl-cmp.h>
@@ -283,6 +284,51 @@ cmd_add_bpf_filter(const char *ifname, int prio, bool egress, bool eth)
 	return nl_wait_for_ack(rtnl_sock);
 }
 
+/*
+ * With protocol all, flower matches the protocol behind all VLAN tags, and
+ * the filters for IPv4 and IPv6 share one flow dissection per packet.
+ */
+static int
+cmd_add_dns_filter(const char *ifname, int prio, uint16_t eth_type)
+{
+	struct tc_mirred mirred = {
+		.action = TC_ACT_STOLEN,
+		.eaction = TCA_EGRESS_REDIR,
+		.ifindex = if_nametoindex(QOSIFY_DNS_IFNAME),
+	};
+	struct nlattr *opts, *acts, *act, *act_opts;
+	struct nl_msg *msg;
+
+	if (!mirred.ifindex)
+		return -1;
+
+	msg = filter_msg_alloc(ifname, prio, false, "flower");
+	if (!msg)
+		return -1;
+
+	opts = nla_nest_start(msg, TCA_OPTIONS);
+	nla_put_u16(msg, TCA_FLOWER_KEY_ETH_TYPE, htons(eth_type));
+	nla_put_u8(msg, TCA_FLOWER_KEY_IP_PROTO, IPPROTO_UDP);
+	nla_put_u16(msg, TCA_FLOWER_KEY_UDP_SRC, htons(53));
+	nla_put_u32(msg, TCA_FLOWER_FLAGS, TCA_CLS_FLAGS_SKIP_HW);
+
+	acts = nla_nest_start(msg, TCA_FLOWER_ACT);
+	act = nla_nest_start(msg, 1);
+	nla_put_string(msg, TCA_ACT_KIND, "mirred");
+	act_opts = nla_nest_start(msg, TCA_ACT_OPTIONS);
+	nla_put(msg, TCA_MIRRED_PARMS, sizeof(mirred), &mirred);
+	nla_nest_end(msg, act_opts);
+	nla_nest_end(msg, act);
+	nla_nest_end(msg, acts);
+
+	nla_nest_end(msg, opts);
+
+	nl_send_auto_complete(rtnl_sock, msg);
+	nlmsg_free(msg);
+
+	return nl_wait_for_ack(rtnl_sock);
+}
+
 static int
 interface_queues(const char *ifname, const char *type)
 {
@@ -382,26 +428,8 @@ cmd_add_ingress(struct qosify_iface *iface, bool eth)
 
 	cmd_add_bpf_filter(iface->ifname, prio++, false, eth);
 
-	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
-	APPEND(buf, ofs, " protocol ip u32 match ip sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
-	qosify_run_cmd(buf, false);
-
-	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
-	APPEND(buf, ofs, " protocol 802.1Q u32 offset plus 4 match ip sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
-	qosify_run_cmd(buf, false);
-
-	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
-	APPEND(buf, ofs, " protocol ipv6 u32 match ip6 sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
-	qosify_run_cmd(buf, false);
-
-	ofs = prepare_filter_cmd(buf, sizeof(buf), iface->ifname, prio++, true, false);
-	APPEND(buf, ofs, " protocol ipv6 u32 offset plus 4 match ip6 sport 53 0xffff "
-			 "flowid 1:1 action mirred egress redirect dev " QOSIFY_DNS_IFNAME);
-	qosify_run_cmd(buf, false);
-
+	cmd_add_dns_filter(iface->ifname, prio, ETH_P_IP);
+	cmd_add_dns_filter(iface->ifname, prio++, ETH_P_IPV6);
 
 	if (!iface->config.ingress)
 		return 0;
