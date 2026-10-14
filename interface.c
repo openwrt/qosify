@@ -226,13 +226,34 @@ prepare_filter_cmd(char *buf, int len, const char *dev, int prio, bool add, bool
 			add ? "add" : "del", dev, egress ? "e" : "in", prio);
 }
 
-static int
-cmd_add_bpf_filter(const char *ifname, int prio, bool egress, bool eth)
+static struct nl_msg *
+filter_msg_alloc(const char *ifname, int prio, bool egress, const char *kind)
 {
 	struct tcmsg tcmsg = {
 		.tcm_family = AF_UNSPEC,
 		.tcm_ifindex = if_nametoindex(ifname),
+		.tcm_info = TC_H_MAKE(prio << 16, htons(ETH_P_ALL)),
 	};
+	struct nl_msg *msg;
+
+	if (egress)
+		tcmsg.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_EGRESS);
+	else
+		tcmsg.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS);
+
+	msg = nlmsg_alloc_simple(RTM_NEWTFILTER, NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL);
+	if (!msg)
+		return NULL;
+
+	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
+	nla_put_string(msg, TCA_KIND, kind);
+
+	return msg;
+}
+
+static int
+cmd_add_bpf_filter(const char *ifname, int prio, bool egress, bool eth)
+{
 	struct nl_msg *msg;
 	struct nlattr *opts;
 	const char *suffix;
@@ -245,16 +266,9 @@ cmd_add_bpf_filter(const char *ifname, int prio, bool egress, bool eth)
 
 	snprintf(name, sizeof(name), "qosify_%s", suffix);
 
-	if (egress)
-		tcmsg.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_EGRESS);
-	else
-		tcmsg.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS);
-
-	tcmsg.tcm_info = TC_H_MAKE(prio << 16, htons(ETH_P_ALL));
-
-	msg = nlmsg_alloc_simple(RTM_NEWTFILTER, NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL);
-	nlmsg_append(msg, &tcmsg, sizeof(tcmsg), NLMSG_ALIGNTO);
-	nla_put_string(msg, TCA_KIND, "bpf");
+	msg = filter_msg_alloc(ifname, prio, egress, "bpf");
+	if (!msg)
+		return -1;
 
 	opts = nla_nest_start(msg, TCA_OPTIONS);
 	nla_put_u32(msg, TCA_BPF_FD, prog_fd);
