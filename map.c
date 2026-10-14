@@ -408,7 +408,7 @@ qosify_map_set_port(struct qosify_map_data *data, const char *str)
 	}
 
 	if (!start_port || end_port < start_port ||
-	    end_port >= 65535)
+	    end_port > 65535)
 		return -1;
 
 	for (i = start_port; i <= end_port; i++) {
