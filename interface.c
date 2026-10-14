@@ -199,7 +199,7 @@ interface_ifb_name(struct qosify_iface *iface)
 
 	ifname[4] = iface->ifname[0];
 	ifname[5] = iface->ifname[1];
-	snprintf(ifname + 6, IFNAMSIZ - 6, "%s", iface->ifname + len - (IFNAMSIZ + 6) - 1);
+	snprintf(ifname + 6, IFNAMSIZ - 6, "%s", iface->ifname + len - (IFNAMSIZ - 6 - 1));
 
 	return ifname;
 }
