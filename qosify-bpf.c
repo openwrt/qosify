@@ -22,8 +22,11 @@
 
 #define INET_ECN_MASK 3
 
-#define FLOW_CHECK_INTERVAL	((u32)((1000000000ULL) >> 24))
-#define FLOW_TIMEOUT		((u32)((30ULL * 1000000000ULL) >> 24))
+/* in the unit of cur_time() */
+#define TIME_SEC(_s)		((u32)(((_s) * 1000000000ULL) >> 24))
+
+#define FLOW_CHECK_INTERVAL	TIME_SEC(1)
+#define FLOW_TIMEOUT		TIME_SEC(30)
 #define FLOW_BULK_TIMEOUT	5
 
 #define EWMA_SHIFT		12
@@ -37,7 +40,7 @@
 
 #define IPV4_FRAG_ENTRIES	1024
 /* mirror the default IPv4 reassembly timeout of Linux (ipfrag_time) */
-#define IPV4_FRAG_TIMEOUT	((u32)((30ULL * 1000000000ULL) >> 24))
+#define IPV4_FRAG_TIMEOUT	TIME_SEC(30)
 
 enum {
 	IPV4_FRAG_NONE,
