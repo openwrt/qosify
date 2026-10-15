@@ -138,11 +138,15 @@ iface_config_equal(struct qosify_iface *if1, struct qosify_iface *if2)
 	return true;
 }
 
+/* The value becomes part of a tc command that qosify_run_cmd() passes to
+ * sh -c, so only the characters of rates, modes and option words pass. */
 static const char *check_str(struct blob_attr *attr)
 {
 	const char *str = blobmsg_get_string(attr);
 
-	if (strchr(str, '\''))
+	if (str[strspn(str, "abcdefghijklmnopqrstuvwxyz"
+			    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+			    "0123456789._- ")])
 		return NULL;
 
 	return str;
@@ -172,7 +176,7 @@ iface_config_set(struct qosify_iface *iface, struct blob_attr *attr)
 		cfg->bandwidth_up = check_str(cur);
 	if ((cur = tb[IFACE_ATTR_BW_DOWN]) != NULL)
 		cfg->bandwidth_down = check_str(cur);
-	if ((cur = tb[IFACE_ATTR_MODE]) != NULL)
+	if ((cur = tb[IFACE_ATTR_MODE]) != NULL && check_str(cur))
 		cfg->mode = check_str(cur);
 	if ((cur = tb[IFACE_ATTR_OPTS]) != NULL)
 		cfg->common_opts = check_str(cur);
