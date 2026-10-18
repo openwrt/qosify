@@ -630,6 +630,8 @@ qosify_iface_check_interface(struct qosify_iface *iface)
 	char ifname[IFNAMSIZ];
 
 	if (qosify_ubus_check_interface(name, ifname, sizeof(ifname)) == 0) {
+		if (strcmp(iface->ifname, ifname))
+			interface_stop(iface);
 		snprintf(iface->ifname, sizeof(iface->ifname), "%s", ifname);
 		interface_start(iface);
 	} else {
